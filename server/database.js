@@ -62,6 +62,26 @@ async function ensureDatabase() {
       initials text,
       created_at timestamptz not null default now()
     );
+
+    create table if not exists shop_profiles (
+      id uuid primary key,
+      user_id uuid unique references users(id) on delete cascade,
+      shop_name text not null,
+      contact_name text,
+      phone text,
+      email text,
+      address text,
+      city text,
+      state text,
+      zip text,
+      specialties text[] not null default '{}',
+      labor_rate numeric(8,2),
+      warranty text,
+      availability text,
+      claimed boolean not null default false,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
   `);
 
   initialized = true;
@@ -81,6 +101,29 @@ function mapQuoteRow(row) {
     status: row.status,
     initials: row.initials,
     createdAt: row.created_at,
+  };
+}
+
+function mapShopProfileRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    userId: row.user_id,
+    shopName: row.shop_name,
+    contactName: row.contact_name,
+    phone: row.phone,
+    email: row.email,
+    address: row.address,
+    city: row.city,
+    state: row.state,
+    zip: row.zip,
+    specialties: row.specialties || [],
+    laborRate: row.labor_rate === null || row.labor_rate === undefined ? "" : String(row.labor_rate),
+    warranty: row.warranty,
+    availability: row.availability,
+    claimed: row.claimed,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 
@@ -134,6 +177,80 @@ export async function createUser(user) {
   }));
   const { passwordHash, ...safeUser } = user;
   return safeUser;
+}
+
+export async function getShopProfile(userId) {
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query("select * from shop_profiles where user_id = $1 limit 1", [userId]);
+    return mapShopProfileRow(result.rows[0]);
+  }
+  const store = await readStore();
+  return (store.shopProfiles || []).find((profile) => profile.userId === userId) || null;
+}
+
+export async function upsertShopProfile(profile) {
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query(
+      `insert into shop_profiles
+       (id, user_id, shop_name, contact_name, phone, email, address, city, state, zip, specialties, labor_rate, warranty, availability, claimed, created_at, updated_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+       on conflict (user_id) do update set
+         shop_name = excluded.shop_name,
+         contact_name = excluded.contact_name,
+         phone = excluded.phone,
+         email = excluded.email,
+         address = excluded.address,
+         city = excluded.city,
+         state = excluded.state,
+         zip = excluded.zip,
+         specialties = excluded.specialties,
+         labor_rate = excluded.labor_rate,
+         warranty = excluded.warranty,
+         availability = excluded.availability,
+         claimed = excluded.claimed,
+         updated_at = excluded.updated_at
+       returning *`,
+      [
+        profile.id,
+        profile.userId,
+        profile.shopName,
+        profile.contactName,
+        profile.phone,
+        profile.email,
+        profile.address,
+        profile.city,
+        profile.state,
+        profile.zip,
+        profile.specialties,
+        profile.laborRate === "" || profile.laborRate === null || profile.laborRate === undefined ? null : Number(profile.laborRate),
+        profile.warranty,
+        profile.availability,
+        profile.claimed,
+        profile.createdAt,
+        profile.updatedAt,
+      ],
+    );
+    return mapShopProfileRow(result.rows[0]);
+  }
+
+  let savedProfile;
+  await updateStore((store) => {
+    const existing = store.shopProfiles || [];
+    const current = existing.find((item) => item.userId === profile.userId);
+    savedProfile = {
+      ...current,
+      ...profile,
+      id: current?.id || profile.id,
+      createdAt: current?.createdAt || profile.createdAt,
+    };
+    return {
+      ...store,
+      shopProfiles: [savedProfile, ...existing.filter((item) => item.userId !== profile.userId)],
+    };
+  });
+  return savedProfile;
 }
 
 export async function createVehicle(vehicle) {
@@ -224,4 +341,32 @@ export async function listQuoteRequests(shopName) {
   return (store.quoteRequests || []).filter(
     (quote) => !shopName || quote.shopName === shopName,
   );
+}
+
+export async function updateQuoteRequestStatus({ id, shopName, status }) {
+  if (pool) {
+    await ensureDatabase();
+    const values = [id, status];
+    let where = "where id = $1";
+    if (shopName) {
+      values.push(shopName);
+      where += " and shop_name = $3";
+    }
+    const result = await pool.query(
+      `update quote_requests set status = $2 ${where} returning *`,
+      values,
+    );
+    return mapQuoteRow(result.rows[0]);
+  }
+
+  let updatedQuote = null;
+  await updateStore((store) => ({
+    ...store,
+    quoteRequests: (store.quoteRequests || []).map((quote) => {
+      if (quote.id !== id || (shopName && quote.shopName !== shopName)) return quote;
+      updatedQuote = { ...quote, status };
+      return updatedQuote;
+    }),
+  }));
+  return updatedQuote;
 }

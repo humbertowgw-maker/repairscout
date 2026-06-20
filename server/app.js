@@ -12,9 +12,12 @@ import {
   createVehicle,
   databaseMode,
   findUserByEmail,
+  getShopProfile,
   listQuoteRequests,
   listVehicles,
   saveDiagnosis,
+  updateQuoteRequestStatus,
+  upsertShopProfile,
 } from "./database.js";
 import { diagnoseVehicle } from "./diagnosis.js";
 import { searchRepairShops } from "./shops.js";
@@ -65,6 +68,7 @@ app.use("/api", rateLimit({ key: "api", windowMs: 15 * 60 * 1000, max: 240 }));
 app.use("/api/auth", rateLimit({ key: "auth", windowMs: 15 * 60 * 1000, max: 25 }));
 app.use("/api/diagnose", rateLimit({ key: "diagnose", windowMs: 15 * 60 * 1000, max: 30 }));
 app.use("/api/quote-requests", rateLimit({ key: "quotes", windowMs: 15 * 60 * 1000, max: 60 }));
+app.use("/api/shop-profile", rateLimit({ key: "shop-profile", windowMs: 15 * 60 * 1000, max: 60 }));
 app.use(optionalAuth);
 
 app.get("/api/health", (_request, response) => {
@@ -234,6 +238,64 @@ app.get("/api/shops/search", async (request, response) => {
   response.json(await searchRepairShops(zip, radius));
 });
 
+const shopProfileInput = z.object({
+  shopName: z.string().trim().min(2).max(120),
+  contactName: z.string().trim().max(120).optional().default(""),
+  phone: z.string().trim().max(40).optional().default(""),
+  email: z.string().trim().email().optional().or(z.literal("")).default(""),
+  address: z.string().trim().max(180).optional().default(""),
+  city: z.string().trim().max(80).optional().default(""),
+  state: z.string().trim().max(30).optional().default(""),
+  zip: z.string().trim().max(10).optional().default(""),
+  specialties: z.array(z.string().trim().min(1).max(60)).max(8).optional().default([]),
+  laborRate: z.string().trim().max(20).optional().default(""),
+  warranty: z.string().trim().max(180).optional().default(""),
+  availability: z.string().trim().max(120).optional().default(""),
+});
+
+app.get("/api/shop-profile", requireAuth, async (request, response) => {
+  if (request.user.role !== "shop") {
+    return response.status(403).json({ error: "Esta vista es solo para talleres." });
+  }
+
+  const profile = await getShopProfile(request.user.id);
+  response.json({
+    profile: profile || {
+      shopName: request.user.shopName || "",
+      contactName: request.user.name || "",
+      email: request.user.email || "",
+      specialties: [],
+      laborRate: "",
+      warranty: "",
+      availability: "",
+      claimed: false,
+    },
+  });
+});
+
+app.put("/api/shop-profile", requireAuth, async (request, response) => {
+  if (request.user.role !== "shop") {
+    return response.status(403).json({ error: "Solo una cuenta de taller puede configurar un perfil." });
+  }
+
+  const parsed = shopProfileInput.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Completa el nombre del taller y revisa los datos del perfil." });
+  }
+
+  const now = new Date().toISOString();
+  const profile = await upsertShopProfile({
+    id: crypto.randomUUID(),
+    userId: request.user.id,
+    ...parsed.data,
+    claimed: true,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  response.json({ profile });
+});
+
 const quoteInput = z.object({
   shopName: z.string().min(2).max(120),
   customer: z.string().min(2).max(120).default("Cliente de RepairScout"),
@@ -264,6 +326,33 @@ app.post("/api/quote-requests", async (request, response) => {
   };
   await createQuoteRequest(quoteRequest);
   response.status(201).json({ quoteRequest });
+});
+
+const quoteStatusInput = z.object({
+  status: z.enum(["Solicitud nueva", "Requiere revisión", "En revisión", "Cotizada", "Declinada", "Cita solicitada"]),
+});
+
+app.patch("/api/quote-requests/:id/status", requireAuth, async (request, response) => {
+  if (request.user.role !== "shop") {
+    return response.status(403).json({ error: "Solo el taller puede actualizar esta solicitud." });
+  }
+
+  const parsed = quoteStatusInput.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Selecciona un estado válido." });
+  }
+
+  const updated = await updateQuoteRequestStatus({
+    id: request.params.id,
+    shopName: request.user.shopName,
+    status: parsed.data.status,
+  });
+
+  if (!updated) {
+    return response.status(404).json({ error: "No encontramos esa solicitud para tu taller." });
+  }
+
+  response.json({ quoteRequest: updated });
 });
 
 if (process.env.VERCEL !== "1") {

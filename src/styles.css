@@ -176,6 +176,7 @@ select { width: 100%; padding: 10px; }
 .confidence i { display: block; width: 82%; height: 100%; background: #6cc293; border-radius: inherit; }
 .source-note { display: block; color: #82938b; font-size: 9px; margin: -12px 0 17px; }
 .outline { border: 1px solid #b8c5be; background: white; color: var(--green-dark); font-weight: 700; border-radius: 9px; padding: 11px 16px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.outline.compact { padding: 9px 12px; font-size: 11px; }
 
 .parts-table { background: white; border: 1px solid var(--line); border-radius: 13px; overflow: hidden; }
 .table-head, .part-row { display: grid; grid-template-columns: 2.2fr 1fr 1fr .7fr; gap: 25px; align-items: center; padding: 17px 22px; }
@@ -232,6 +233,17 @@ select { width: 100%; padding: 10px; }
 .icon-button i { position: absolute; width: 6px; height: 6px; right: 7px; top: 7px; background: #db7042; border-radius: 50%; border: 1px solid white; }
 .avatar { width: 36px; height: 36px; display: grid; place-items: center; background: #d9aa6a; color: #382818; border-radius: 50%; font-weight: 800; font-size: 11px; margin-left: 6px; }
 .shop-content { padding: 26px 32px 45px; max-width: 1500px; margin: auto; }
+.connection-strip { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.live-badge { display: inline-flex; align-items: center; border-radius: 999px; border: 1px solid #d8dfdb; background: #f4f7f5; color: #6d7772; padding: 7px 10px; font-size: 10px; font-weight: 800; }
+.live-badge.on { border-color: #a9d2bd; background: var(--green-pale); color: var(--green); }
+.live-badge.warn { border-color: #efd3a5; background: #fff4df; color: #9a651f; }
+.shop-profile-panel { margin-bottom: 17px; }
+.profile-form { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; padding: 0 20px 18px; }
+.profile-form label { margin: 0; color: #59635e; }
+.profile-form label.wide { grid-column: span 2; }
+.profile-form input { width: 100%; margin-top: 7px; padding: 10px 11px; }
+.profile-message { margin: 0 20px 14px; color: var(--green); background: var(--green-pale); border: 1px solid #b8d8c8; border-radius: 8px; padding: 10px 12px; font-size: 11px; }
+.shop-profile-panel > .primary { margin: 0 20px 20px; }
 .metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
 .metric-grid article { background: white; border: 1px solid var(--line); border-radius: 11px; padding: 18px; display: flex; align-items: center; gap: 13px; }
 .metric-icon { width: 42px; height: 42px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 9px; }
@@ -322,6 +334,10 @@ select { width: 100%; padding: 10px; }
 .drawer-check strong { color: var(--ink); font-size: 12px; margin-bottom: 3px; }
 .draft-total { display: flex; justify-content: space-between; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 17px 0; margin: 25px 0; font-size: 12px; }
 .draft-total strong { font-size: 17px; }
+.status-actions { display: grid; gap: 8px; margin: -8px 0 20px; }
+.status-actions small { color: var(--green); font-size: 9px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; }
+.status-actions button { border: 1px solid var(--line); border-radius: 8px; background: white; color: #5f6964; padding: 9px 10px; font-size: 11px; font-weight: 800; text-align: left; }
+.status-actions button.active { border-color: #9fcdb8; background: var(--green-pale); color: var(--green); }
 .quote-drawer .outline { margin-top: 10px; }
 .legal-page { min-height: calc(100vh - 76px); padding: 72px max(6vw, 30px); background: linear-gradient(180deg, #f7faf8 0%, #eef4f0 100%); }
 .legal-card { max-width: 980px; margin: auto; background: white; border: 1px solid var(--line); border-radius: 20px; padding: clamp(28px, 5vw, 54px); box-shadow: 0 24px 70px rgba(23,33,29,.08); }
@@ -345,6 +361,7 @@ select { width: 100%; padding: 10px; }
   .trust-row { gap: 11px; }
   .progress-strip button { min-width: 155px; }
   .metric-grid { grid-template-columns: 1fr 1fr; }
+  .profile-form { grid-template-columns: repeat(2, 1fr); }
   .shop-columns, .shop-bottom-grid { grid-template-columns: 1fr; }
 }
 
@@ -397,6 +414,7 @@ select { width: 100%; padding: 10px; }
   .title-line { align-items: flex-start; }
   .section-heading h2 { font-size: 28px; }
   .metric-grid { grid-template-columns: 1fr; }
+  .profile-form, .profile-form label.wide { grid-template-columns: 1fr; grid-column: span 1; }
   .shop-header-actions .icon-button { display: none; }
   .request-meta { display: none; }
   .ai-workbench { grid-template-columns: auto 1fr; }

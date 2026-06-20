@@ -37,14 +37,19 @@ import {
   decodeVin,
   getCurrentUser,
   getQuoteRequests,
+  getShopProfile,
+  getSystemHealth,
   loginAccount,
   registerAccount,
+  saveShopProfile,
   saveQuoteRequest,
   saveVehicle,
   searchShops,
+  updateQuoteRequestStatus,
 } from "./api";
 
 const steps = ["Describe el problema", "Evaluación con IA", "Compara costos", "Elige un taller"];
+const quoteStatuses = ["En revisión", "Requiere revisión", "Cotizada", "Cita solicitada", "Declinada"];
 
 function Brand() {
   return (
@@ -504,10 +509,11 @@ function CustomerPortal({ user, onRequireAuth }) {
   );
 }
 
-function Sidebar({ active, setActive }) {
+function Sidebar({ active, setActive, shopProfile }) {
   const links = [
     ["Resumen", LayoutDashboard],
     ["Solicitudes", MessageSquareText],
+    ["Perfil", Building2],
     ["Citas", Calendar],
     ["Órdenes de trabajo", Wrench],
     ["Clientes", Users],
@@ -517,7 +523,7 @@ function Sidebar({ active, setActive }) {
   return (
     <aside className="shop-sidebar">
       <Brand />
-      <div className="shop-identity"><span>MS</span><div><strong>Mason Street Auto</strong><small>Administrador del taller</small></div><ChevronDown size={16} /></div>
+      <div className="shop-identity"><span>{(shopProfile?.shopName || "RS").slice(0, 2).toUpperCase()}</span><div><strong>{shopProfile?.shopName || "Configura tu taller"}</strong><small>{shopProfile?.claimed ? "Perfil reclamado" : "Administrador del taller"}</small></div><ChevronDown size={16} /></div>
       <nav>
         {links.map(([label, Icon]) => (
           <button className={active === label ? "active" : ""} onClick={() => setActive(label)} key={label}><Icon size={18} />{label}{label === "Solicitudes" ? <i>3</i> : null}</button>
@@ -529,17 +535,74 @@ function Sidebar({ active, setActive }) {
   );
 }
 
-function ShopPortal({ user }) {
+function ShopProfilePanel({ profileForm, setProfileForm, onSave, profileSaving, profileMessage }) {
+  const specialtyText = Array.isArray(profileForm.specialties) ? profileForm.specialties.join(", ") : "";
+  return (
+    <section className="panel shop-profile-panel">
+      <div className="panel-title">
+        <div>
+          <h2>Perfil del taller</h2>
+          <p>Estos datos preparan tu taller para recibir solicitudes reales y cotizar mejor.</p>
+        </div>
+        <span className={profileForm.claimed ? "live-badge on" : "live-badge"}>{profileForm.claimed ? "Reclamado" : "Pendiente"}</span>
+      </div>
+      <div className="profile-form">
+        <label>Nombre del taller<input value={profileForm.shopName || ""} onChange={(event) => setProfileForm((current) => ({ ...current, shopName: event.target.value }))} /></label>
+        <label>Contacto principal<input value={profileForm.contactName || ""} onChange={(event) => setProfileForm((current) => ({ ...current, contactName: event.target.value }))} /></label>
+        <label>Teléfono<input value={profileForm.phone || ""} onChange={(event) => setProfileForm((current) => ({ ...current, phone: event.target.value }))} /></label>
+        <label>Correo del taller<input type="email" value={profileForm.email || ""} onChange={(event) => setProfileForm((current) => ({ ...current, email: event.target.value }))} /></label>
+        <label className="wide">Dirección<input value={profileForm.address || ""} onChange={(event) => setProfileForm((current) => ({ ...current, address: event.target.value }))} /></label>
+        <label>Ciudad<input value={profileForm.city || ""} onChange={(event) => setProfileForm((current) => ({ ...current, city: event.target.value }))} /></label>
+        <label>Estado<input value={profileForm.state || ""} onChange={(event) => setProfileForm((current) => ({ ...current, state: event.target.value }))} /></label>
+        <label>Código postal<input value={profileForm.zip || ""} onChange={(event) => setProfileForm((current) => ({ ...current, zip: event.target.value }))} /></label>
+        <label>Tarifa de mano de obra<input value={profileForm.laborRate || ""} onChange={(event) => setProfileForm((current) => ({ ...current, laborRate: event.target.value }))} placeholder="$145/h" /></label>
+        <label className="wide">Especialidades<input value={specialtyText} onChange={(event) => setProfileForm((current) => ({ ...current, specialties: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) }))} placeholder="Frenos, suspensión, diagnóstico eléctrico" /></label>
+        <label className="wide">Garantía<input value={profileForm.warranty || ""} onChange={(event) => setProfileForm((current) => ({ ...current, warranty: event.target.value }))} placeholder="12 meses / 12,000 millas" /></label>
+        <label className="wide">Disponibilidad<input value={profileForm.availability || ""} onChange={(event) => setProfileForm((current) => ({ ...current, availability: event.target.value }))} placeholder="Lun–Vie 8am–6pm, sábados por cita" /></label>
+      </div>
+      {profileMessage ? <p className="profile-message">{profileMessage}</p> : null}
+      <button className="primary" onClick={onSave} disabled={profileSaving}>{profileSaving ? "Guardando..." : "Guardar y reclamar taller"} <Check size={17} /></button>
+    </section>
+  );
+}
+
+function ShopPortal({ user, onRequireAuth }) {
   const [active, setActive] = useState("Resumen");
   const [selectedRequest, setSelectedRequest] = useState(null);
   const [savedRequests, setSavedRequests] = useState([]);
+  const [shopProfile, setShopProfile] = useState(null);
+  const [profileForm, setProfileForm] = useState({
+    shopName: user?.shopName || "",
+    contactName: user?.name || "",
+    email: user?.email || "",
+    phone: "",
+    address: "",
+    city: "",
+    state: "",
+    zip: "",
+    specialties: [],
+    laborRate: "",
+    warranty: "",
+    availability: "",
+    claimed: false,
+  });
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileMessage, setProfileMessage] = useState("");
+  const [health, setHealth] = useState(null);
+  const [statusUpdating, setStatusUpdating] = useState("");
 
   useEffect(() => {
     let cancelled = false;
 
-    getQuoteRequests()
-      .then(({ quoteRequests: requests }) => {
-        if (!cancelled) setSavedRequests(requests);
+    Promise.allSettled([getQuoteRequests(), getShopProfile(), getSystemHealth()])
+      .then(([requestsResult, profileResult, healthResult]) => {
+        if (cancelled) return;
+        if (requestsResult.status === "fulfilled") setSavedRequests(requestsResult.value.quoteRequests);
+        if (profileResult.status === "fulfilled") {
+          setShopProfile(profileResult.value.profile);
+          setProfileForm((current) => ({ ...current, ...profileResult.value.profile }));
+        }
+        if (healthResult.status === "fulfilled") setHealth(healthResult.value);
       })
       .catch(() => {
         if (!cancelled) setSavedRequests([]);
@@ -549,6 +612,41 @@ function ShopPortal({ user }) {
       cancelled = true;
     };
   }, []);
+
+  const saveProfile = async () => {
+    if (!user) {
+      onRequireAuth();
+      return;
+    }
+    setProfileSaving(true);
+    setProfileMessage("");
+    try {
+      const result = await saveShopProfile(profileForm);
+      setShopProfile(result.profile);
+      setProfileForm((current) => ({ ...current, ...result.profile }));
+      setProfileMessage("Perfil guardado. Tu taller ya puede operar como perfil reclamado.");
+    } catch (profileError) {
+      setProfileMessage(profileError.message);
+    } finally {
+      setProfileSaving(false);
+    }
+  };
+
+  const changeRequestStatus = async (request, status) => {
+    if (!request.id) return;
+    setStatusUpdating(`${request.id}:${status}`);
+    try {
+      const result = await updateQuoteRequestStatus(request.id, status);
+      setSavedRequests((current) =>
+        current.map((item) => item.id === request.id ? result.quoteRequest : item),
+      );
+      setSelectedRequest((current) => current?.id === request.id ? { ...current, ...result.quoteRequest, value: result.quoteRequest.estimate, distance: result.quoteRequest.zip } : current);
+    } catch (statusError) {
+      setProfileMessage(statusError.message);
+    } finally {
+      setStatusUpdating("");
+    }
+  };
 
   const visibleRequests = useMemo(() => {
     const live = savedRequests.map((request) => ({
@@ -567,14 +665,36 @@ function ShopPortal({ user }) {
 
   return (
     <main className="shop-shell">
-      <Sidebar active={active} setActive={setActive} />
+      <Sidebar active={active} setActive={setActive} shopProfile={shopProfile || profileForm} />
       <div className="shop-main">
         <header className="shop-header">
-          <div><span className="breadcrumb">Portal del taller / {active}</span><h1>{active === "Resumen" ? "Buenos días, Alex" : active}</h1></div>
-          <div className="shop-header-actions"><button className="icon-button"><Search size={19} /></button><button className="icon-button"><Bell size={19} /><i /></button><span className="avatar">AS</span></div>
+          <div><span className="breadcrumb">Portal del taller / {active}</span><h1>{active === "Resumen" ? `Buenos días${user?.name ? `, ${user.name.split(" ")[0]}` : ""}` : active}</h1></div>
+          <div className="shop-header-actions">
+            {!user ? <button className="outline compact" onClick={onRequireAuth}>Iniciar sesión / crear cuenta</button> : null}
+            <button className="icon-button"><Search size={19} /></button>
+            <button className="icon-button"><Bell size={19} /><i /></button>
+            <span className="avatar">{user?.name ? user.name.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase() : "RS"}</span>
+          </div>
         </header>
 
         <div className="shop-content">
+          <section className="connection-strip">
+            <span className={health?.database === "postgres" ? "live-badge on" : "live-badge"}>Base de datos: {health?.database || "revisando"}</span>
+            <span className={health?.authConfigured ? "live-badge on" : "live-badge"}>Cuentas: {health?.authConfigured ? "activas" : "pendientes"}</span>
+            <span className={health?.aiConfigured ? "live-badge warn" : "live-badge"}>IA: {health?.aiConfigured ? "configurada / verificando billing" : "pendiente"}</span>
+            <span className={shopProfile?.claimed ? "live-badge on" : "live-badge"}>Taller: {shopProfile?.claimed ? "reclamado" : "configúralo"}</span>
+          </section>
+
+          {active === "Perfil" || !shopProfile?.claimed ? (
+            <ShopProfilePanel
+              profileForm={profileForm}
+              setProfileForm={setProfileForm}
+              onSave={saveProfile}
+              profileSaving={profileSaving}
+              profileMessage={profileMessage}
+            />
+          ) : null}
+
           <section className="metric-grid">
             <article><span className="metric-icon green"><MessageSquareText /></span><div><small>Nuevas solicitudes</small><strong>{visibleRequests.length}</strong><em>{savedRequests.length} recibidas en la app</em></div></article>
             <article><span className="metric-icon blue"><Calendar /></span><div><small>Citas de hoy</small><strong>7</strong><em>Primera a las 8:30 a. m.</em></div></article>
@@ -635,6 +755,21 @@ function ShopPortal({ user }) {
             <div className="drawer-check"><Check size={16} /><span><strong>Inspeccionar el sistema reportado</strong>Revisar los síntomas y escanear el vehículo en busca de códigos relacionados.</span></div>
             <div className="drawer-check"><Check size={16} /><span><strong>Verificar antes de reemplazar piezas</strong>Adjuntar mediciones, fotografías o resultados de pruebas.</span></div>
             <div className="draft-total"><span>Rango preliminar del cliente</span><strong>{selectedRequest.value}</strong></div>
+            {selectedRequest.id ? (
+              <div className="status-actions">
+                <small>Actualizar estado</small>
+                {quoteStatuses.map((status) => (
+                  <button
+                    key={status}
+                    className={selectedRequest.status === status ? "active" : ""}
+                    disabled={statusUpdating === `${selectedRequest.id}:${status}`}
+                    onClick={() => changeRequestStatus(selectedRequest, status)}
+                  >
+                    {statusUpdating === `${selectedRequest.id}:${status}` ? "Guardando..." : status}
+                  </button>
+                ))}
+              </div>
+            ) : null}
             <button className="primary full">Abrir centro de diagnóstico <ArrowRight size={17} /></button>
             <button className="outline full">Enviar mensaje al cliente</button>
           </section>
@@ -746,7 +881,7 @@ export default function App() {
     <>
       {portal === "customer" || page !== "home" ? <TopBar portal={portal} setPortal={setPortal} page={page} setPage={setPage} user={user} onAuth={() => setAuthOpen(true)} onLogout={logout} /> : null}
       {page === "home" ? (
-        portal === "customer" ? <CustomerPortal user={user} onRequireAuth={() => setAuthOpen(true)} /> : <ShopPortal user={user} />
+        portal === "customer" ? <CustomerPortal user={user} onRequireAuth={() => setAuthOpen(true)} /> : <ShopPortal user={user} onRequireAuth={() => setAuthOpen(true)} />
       ) : (
         <LegalPage page={page} setPage={setPage} />
       )}

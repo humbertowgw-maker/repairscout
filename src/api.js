@@ -40,6 +40,28 @@ export function getQuoteRequests() {
   return request("/api/quote-requests");
 }
 
+export function updateQuoteRequestStatus(id, status) {
+  return request(`/api/quote-requests/${encodeURIComponent(id)}/status`, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
+  });
+}
+
+export function getShopProfile() {
+  return request("/api/shop-profile");
+}
+
+export function saveShopProfile(input) {
+  return request("/api/shop-profile", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+}
+
+export function getSystemHealth() {
+  return request("/api/health");
+}
+
 export function registerAccount(input) {
   return request("/api/auth/register", {
     method: "POST",

@@ -108,7 +108,56 @@ function extractJson(text) {
   }
 
   const parsed = JSON.parse(raw.slice(start, end + 1));
-  const diagnosis = DiagnosisSchema.safeParse(parsed);
+  const number = (value, fallback = 0) => {
+    const result = Number(value);
+    return Number.isFinite(result) ? Math.max(0, result) : fallback;
+  };
+  const safetyLevels = ["bajo", "moderado", "alto", "crítico"];
+  const tones = ["danger", "warn", "neutral"];
+  const confidences = ["Baja", "Media", "Alta"];
+  const causes = Array.isArray(parsed.possibleCauses) ? parsed.possibleCauses : [];
+  const estimate = parsed.estimate || {};
+  const normalized = {
+    summary: String(parsed.summary || "Se requiere una inspección profesional para confirmar la causa."),
+    safetyLevel: safetyLevels.includes(parsed.safetyLevel) ? parsed.safetyLevel : "moderado",
+    safetyMessage: String(parsed.safetyMessage || "Detén el vehículo si el síntoma empeora o afecta la conducción segura."),
+    possibleCauses: causes.slice(0, 4).map((cause) => ({
+      probability: Math.min(99, Math.max(1, Math.round(number(cause?.probability, 25)))),
+      title: String(cause?.title || "Causa posible"),
+      reason: String(cause?.reason || "Debe verificarse con una inspección física."),
+      test: String(cause?.test || "Realizar inspección y pruebas del sistema relacionado."),
+      urgency: String(cause?.urgency || "Verificar"),
+      tone: tones.includes(cause?.tone) ? cause.tone : "neutral",
+    })),
+    estimate: {
+      low: number(estimate.low),
+      high: number(estimate.high),
+      partsLow: number(estimate.partsLow),
+      partsHigh: number(estimate.partsHigh),
+      laborLow: number(estimate.laborLow),
+      laborHigh: number(estimate.laborHigh),
+      laborHoursLow: number(estimate.laborHoursLow),
+      laborHoursHigh: number(estimate.laborHoursHigh),
+      confidence: confidences.includes(estimate.confidence) ? estimate.confidence : "Baja",
+      repairLabel: String(estimate.repairLabel || "Diagnóstico e inspección inicial"),
+    },
+    questions: (Array.isArray(parsed.questions) ? parsed.questions : [])
+      .slice(0, 4)
+      .map((question) => String(question)),
+  };
+
+  if (!normalized.possibleCauses.length) {
+    normalized.possibleCauses.push({
+      probability: 25,
+      title: "Causa pendiente de confirmación",
+      reason: "La respuesta requiere una inspección para identificar el componente exacto.",
+      test: "Realizar inspección visual, escaneo OBD-II y pruebas del sistema relacionado.",
+      urgency: "Diagnosticar",
+      tone: "warn",
+    });
+  }
+
+  const diagnosis = DiagnosisSchema.safeParse(normalized);
   if (!diagnosis.success) {
     throw new Error("The provider returned an invalid diagnosis structure.");
   }
@@ -167,6 +216,7 @@ async function diagnoseWithOpenAiCompatible({
       ],
       temperature: 0.2,
       max_tokens: 1_800,
+      response_format: { type: "json_object" },
     }),
   }, provider);
 

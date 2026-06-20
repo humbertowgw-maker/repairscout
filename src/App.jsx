@@ -443,7 +443,17 @@ function CustomerPortal({ user, onRequireAuth }) {
               <div className="cost-row"><span>Mano de obra · {diagnosis?.estimate?.laborHoursLow ?? 1.2}–{diagnosis?.estimate?.laborHoursHigh ?? 1.8} h</span><strong>${diagnosis?.estimate?.laborLow ?? 174}–${diagnosis?.estimate?.laborHigh ?? 261}</strong></div>
               <div className="cost-row"><span>Materiales e impuestos</span><strong>$25–$58</strong></div>
               <div className="confidence"><span>Confianza de la estimación</span><strong>{diagnosis?.estimate?.confidence || "Alta"}</strong><div><i /></div></div>
-              <small className="source-note">{["openai", "ai-gateway"].includes(diagnosis?.source) ? "Evaluación generada con IA" : "Evaluación de respaldo basada en reglas"}</small>
+              <small className="source-note">
+                {diagnosis?.source === "fallback"
+                  ? "Evaluación de respaldo basada en reglas"
+                  : `Evaluación generada con ${({
+                    groq: "Groq",
+                    gemini: "Google Gemini",
+                    openrouter: "OpenRouter",
+                    "ai-gateway": "Vercel AI Gateway",
+                    openai: "OpenAI",
+                  })[diagnosis?.source] || "IA"}`}
+              </small>
               <button className="primary full" onClick={() => setStep(2)}>Comparar piezas y mano de obra <ArrowRight size={17} /></button>
             </aside>
           </div>
@@ -681,7 +691,11 @@ function ShopPortal({ user, onRequireAuth }) {
           <section className="connection-strip">
             <span className={health?.database === "postgres" ? "live-badge on" : "live-badge"}>Base de datos: {health?.database || "revisando"}</span>
             <span className={health?.authConfigured ? "live-badge on" : "live-badge"}>Cuentas: {health?.authConfigured ? "activas" : "pendientes"}</span>
-            <span className={health?.aiConfigured ? "live-badge warn" : "live-badge"}>IA: {health?.aiConfigured ? "configurada / verificando billing" : "pendiente"}</span>
+            <span className={health?.aiConfigured ? "live-badge warn" : "live-badge"}>
+              IA: {health?.aiProviders?.configured?.length
+                ? health.aiProviders.configured.join(" + ")
+                : "respaldo local"}
+            </span>
             <span className={shopProfile?.claimed ? "live-badge on" : "live-badge"}>Taller: {shopProfile?.claimed ? "reclamado" : "configúralo"}</span>
           </section>
 

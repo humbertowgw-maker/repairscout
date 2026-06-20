@@ -19,7 +19,7 @@ import {
   updateQuoteRequestStatus,
   upsertShopProfile,
 } from "./database.js";
-import { diagnoseVehicle } from "./diagnosis.js";
+import { diagnoseVehicle, getDiagnosisProviderStatus } from "./diagnosis.js";
 import { searchRepairShops } from "./shops.js";
 
 const app = express();
@@ -72,13 +72,11 @@ app.use("/api/shop-profile", rateLimit({ key: "shop-profile", windowMs: 15 * 60 
 app.use(optionalAuth);
 
 app.get("/api/health", (_request, response) => {
+  const aiProviders = getDiagnosisProviderStatus();
   response.json({
     ok: true,
-    aiConfigured: Boolean(
-      process.env.OPENAI_API_KEY ||
-      process.env.AI_GATEWAY_API_KEY ||
-      process.env.VERCEL === "1",
-    ),
+    aiConfigured: aiProviders.configured.length > 0,
+    aiProviders,
     database: databaseMode(),
     authConfigured: authConfigured(),
     timestamp: new Date().toISOString(),

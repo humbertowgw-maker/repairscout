@@ -32,6 +32,241 @@ const DiagnosisSchema = z.object({
   questions: z.array(z.string()).max(4),
 });
 
+const PROVIDER_LABELS = {
+  groq: "Groq",
+  gemini: "Google Gemini",
+  openrouter: "OpenRouter",
+  "ai-gateway": "Vercel AI Gateway",
+  openai: "OpenAI",
+};
+
+function configuredProviders() {
+  return {
+    groq: Boolean(process.env.GROQ_API_KEY),
+    gemini: Boolean(process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY),
+    openrouter: Boolean(process.env.OPENROUTER_API_KEY),
+    "ai-gateway": Boolean(
+      process.env.AI_GATEWAY_API_KEY ||
+      process.env.VERCEL_OIDC_TOKEN ||
+      process.env.VERCEL === "1",
+    ),
+    openai: Boolean(process.env.OPENAI_API_KEY),
+  };
+}
+
+function providerOrder() {
+  const configured = configuredProviders();
+  const requested = String(
+    process.env.AI_PROVIDER_ORDER || "groq,gemini,openrouter,ai-gateway,openai",
+  )
+    .split(",")
+    .map((provider) => provider.trim().toLowerCase())
+    .filter((provider) => Object.hasOwn(PROVIDER_LABELS, provider));
+
+  return [...new Set(requested)].filter((provider) => configured[provider]);
+}
+
+function preferredProvider(input) {
+  const symptoms = [
+    input.description,
+    ...(input.obdCodes || []),
+  ].join(" ").toLowerCase();
+
+  if (/(fren|brake|sobrecal|overheat|temperatura|humo|combustible|fuel|dirección|steering)/.test(symptoms)) {
+    return "gemini";
+  }
+
+  if (/(obd|p\d{4}|código|code|sensor|eléctric|electric|alternador|check engine|luz del motor)/.test(symptoms)) {
+    return "openrouter";
+  }
+
+  return "groq";
+}
+
+function orderedProviders(input) {
+  const available = providerOrder();
+  const preferred = preferredProvider(input);
+  return [preferred, ...available].filter(
+    (provider, index, providers) => available.includes(provider) && providers.indexOf(provider) === index,
+  );
+}
+
+export function getDiagnosisProviderStatus() {
+  const providers = configuredProviders();
+  return {
+    configured: Object.keys(providers).filter((provider) => providers[provider]),
+    preferredOrder: providerOrder(),
+  };
+}
+
+function extractJson(text) {
+  const raw = String(text || "").trim();
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start < 0 || end < start) {
+    throw new Error("The provider did not return a JSON object.");
+  }
+
+  const parsed = JSON.parse(raw.slice(start, end + 1));
+  const diagnosis = DiagnosisSchema.safeParse(parsed);
+  if (!diagnosis.success) {
+    throw new Error("The provider returned an invalid diagnosis structure.");
+  }
+  return diagnosis.data;
+}
+
+async function requestJson(url, options, provider) {
+  const response = await fetch(url, {
+    ...options,
+    signal: AbortSignal.timeout(25_000),
+  });
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const message = payload?.error?.message || payload?.message || `HTTP ${response.status}`;
+    throw new Error(`${provider} request failed: ${message}`);
+  }
+
+  return payload;
+}
+
+function jsonInstruction(systemPrompt) {
+  return `${systemPrompt}
+Devuelve solamente JSON válido, sin Markdown. Usa exactamente esta estructura:
+{
+  "summary": "string",
+  "safetyLevel": "bajo|moderado|alto|crítico",
+  "safetyMessage": "string",
+  "possibleCauses": [{"probability": 1, "title": "string", "reason": "string", "test": "string", "urgency": "string", "tone": "danger|warn|neutral"}],
+  "estimate": {"low": 0, "high": 0, "partsLow": 0, "partsHigh": 0, "laborLow": 0, "laborHigh": 0, "laborHoursLow": 0, "laborHoursHigh": 0, "confidence": "Baja|Media|Alta", "repairLabel": "string"},
+  "questions": ["string"]
+}`;
+}
+
+async function diagnoseWithOpenAiCompatible({
+  apiKey,
+  model,
+  url,
+  systemPrompt,
+  userPrompt,
+  provider,
+  headers = {},
+}) {
+  const payload = await requestJson(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      ...headers,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: "system", content: jsonInstruction(systemPrompt) },
+        { role: "user", content: userPrompt },
+      ],
+      temperature: 0.2,
+      max_tokens: 1_800,
+    }),
+  }, provider);
+
+  return extractJson(payload?.choices?.[0]?.message?.content);
+}
+
+async function diagnoseWithGroq(systemPrompt, userPrompt) {
+  return diagnoseWithOpenAiCompatible({
+    apiKey: process.env.GROQ_API_KEY,
+    model: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
+    url: "https://api.groq.com/openai/v1/chat/completions",
+    systemPrompt,
+    userPrompt,
+    provider: "Groq",
+  });
+}
+
+async function diagnoseWithOpenRouter(systemPrompt, userPrompt) {
+  return diagnoseWithOpenAiCompatible({
+    apiKey: process.env.OPENROUTER_API_KEY,
+    model: process.env.OPENROUTER_MODEL || "openrouter/free",
+    url: "https://openrouter.ai/api/v1/chat/completions",
+    systemPrompt,
+    userPrompt,
+    provider: "OpenRouter",
+    headers: {
+      "HTTP-Referer": process.env.APP_URL || "https://repairscout-smoky.vercel.app",
+      "X-Title": "RepairScout",
+    },
+  });
+}
+
+async function diagnoseWithGemini(systemPrompt, userPrompt) {
+  const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+  const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+  const payload = await requestJson(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": key,
+      },
+      body: JSON.stringify({
+        systemInstruction: {
+          parts: [{ text: jsonInstruction(systemPrompt) }],
+        },
+        contents: [{
+          role: "user",
+          parts: [{ text: userPrompt }],
+        }],
+        generationConfig: {
+          temperature: 0.2,
+          maxOutputTokens: 1_800,
+          responseMimeType: "application/json",
+        },
+      }),
+    },
+    "Gemini",
+  );
+
+  return extractJson(payload?.candidates?.[0]?.content?.parts?.[0]?.text);
+}
+
+async function diagnoseWithGateway(systemPrompt, userPrompt) {
+  const { output } = await generateText({
+    model: process.env.AI_GATEWAY_MODEL || "openai/gpt-5.4",
+    system: systemPrompt,
+    prompt: userPrompt,
+    output: Output.object({ schema: DiagnosisSchema }),
+    providerOptions: {
+      gateway: {
+        tags: ["app:repairscout", "feature:diagnosis"],
+      },
+    },
+  });
+  return output;
+}
+
+async function diagnoseWithOpenAI(systemPrompt, userPrompt) {
+  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const response = await client.responses.parse({
+    model: process.env.OPENAI_MODEL || "gpt-5.5",
+    input: [
+      {
+        role: "system",
+        content: [{ type: "input_text", text: systemPrompt }],
+      },
+      {
+        role: "user",
+        content: [{ type: "input_text", text: userPrompt }],
+      },
+    ],
+    text: {
+      format: zodTextFormat(DiagnosisSchema, "vehicle_diagnosis"),
+    },
+  });
+  return response.output_parsed;
+}
+
 function fallbackDiagnosis(description) {
   const normalized = description.toLowerCase();
   const brakeConcern = /(fren|brake|rechin|grind)/.test(normalized);
@@ -169,64 +404,25 @@ Los costos deben ser rangos prudentes en dólares estadounidenses basados en rep
     zip: input.zip,
   });
 
-  if (!process.env.OPENAI_API_KEY && (process.env.VERCEL === "1" || process.env.VERCEL_OIDC_TOKEN || process.env.AI_GATEWAY_API_KEY)) {
-    try {
-      const { output } = await generateText({
-        model: process.env.AI_GATEWAY_MODEL || "openai/gpt-5.4",
-        system: systemPrompt,
-        prompt: userPrompt,
-        output: Output.object({ schema: DiagnosisSchema }),
-        providerOptions: {
-          gateway: {
-            tags: ["app:repairscout", "feature:diagnosis"],
-          },
-        },
-      });
+  const handlers = {
+    groq: diagnoseWithGroq,
+    gemini: diagnoseWithGemini,
+    openrouter: diagnoseWithOpenRouter,
+    "ai-gateway": diagnoseWithGateway,
+    openai: diagnoseWithOpenAI,
+  };
 
+  for (const provider of orderedProviders(input)) {
+    try {
+      const output = await handlers[provider](systemPrompt, userPrompt);
       return {
         ...output,
-        source: "ai-gateway",
+        source: provider,
       };
     } catch (error) {
-      console.error("AI Gateway diagnosis failed:", error);
-      return { ...fallbackDiagnosis(input.description), source: "fallback" };
+      console.error(`${PROVIDER_LABELS[provider]} diagnosis failed:`, error?.message || "Unknown error");
     }
   }
 
-  if (!process.env.OPENAI_API_KEY) {
-    return { ...fallbackDiagnosis(input.description), source: "fallback" };
-  }
-
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  const response = await client.responses.parse({
-    model: process.env.OPENAI_MODEL || "gpt-5.5",
-    input: [
-      {
-        role: "system",
-        content: [
-          {
-            type: "input_text",
-            text: systemPrompt,
-          },
-        ],
-      },
-      {
-        role: "user",
-        content: [
-          {
-            type: "input_text",
-            text: userPrompt,
-          },
-        ],
-      },
-    ],
-    text: {
-      format: zodTextFormat(DiagnosisSchema, "vehicle_diagnosis"),
-    },
-  });
-
-  return {
-    ...response.output_parsed,
-    source: "openai",
-  };
+  return { ...fallbackDiagnosis(input.description), source: "fallback" };
 }

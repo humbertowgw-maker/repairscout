@@ -25,6 +25,46 @@ const projectDir = path.resolve(currentDir, "..");
 
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
+
+app.set("trust proxy", 1);
+app.use((_request, response, next) => {
+  response.setHeader("X-Content-Type-Options", "nosniff");
+  response.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  response.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  next();
+});
+
+const rateWindows = new Map();
+
+function rateLimit({ key, windowMs, max }) {
+  return (request, response, next) => {
+    const identity = request.ip || request.get("x-forwarded-for") || "unknown";
+    const bucketKey = `${key}:${identity}`;
+    const now = Date.now();
+    const current = rateWindows.get(bucketKey);
+
+    if (!current || current.resetAt <= now) {
+      rateWindows.set(bucketKey, { count: 1, resetAt: now + windowMs });
+      return next();
+    }
+
+    current.count += 1;
+    if (current.count > max) {
+      const retryAfter = Math.ceil((current.resetAt - now) / 1000);
+      response.setHeader("Retry-After", String(retryAfter));
+      return response.status(429).json({
+        error: "Demasiadas solicitudes. Intenta de nuevo en unos minutos.",
+      });
+    }
+
+    return next();
+  };
+}
+
+app.use("/api", rateLimit({ key: "api", windowMs: 15 * 60 * 1000, max: 240 }));
+app.use("/api/auth", rateLimit({ key: "auth", windowMs: 15 * 60 * 1000, max: 25 }));
+app.use("/api/diagnose", rateLimit({ key: "diagnose", windowMs: 15 * 60 * 1000, max: 30 }));
+app.use("/api/quote-requests", rateLimit({ key: "quotes", windowMs: 15 * 60 * 1000, max: 60 }));
 app.use(optionalAuth);
 
 app.get("/api/health", (_request, response) => {

@@ -14,6 +14,7 @@ import {
   Clock3,
   FileCheck2,
   Gauge,
+  Headphones,
   LayoutDashboard,
   MapPin,
   Menu,
@@ -24,6 +25,7 @@ import {
   Sparkles,
   Star,
   Store,
+  Trash2,
   UserRound,
   Users,
   Wrench,
@@ -53,20 +55,25 @@ function Brand() {
   );
 }
 
-function TopBar({ portal, setPortal, user, onAuth, onLogout }) {
+function TopBar({ portal, setPortal, page, setPage, user, onAuth, onLogout }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const goHome = (nextPortal = portal) => {
+    setPage("home");
+    setPortal(nextPortal);
+    setMobileOpen(false);
+  };
 
   return (
     <header className="topbar">
-      <Brand />
+      <button className="brand-button" onClick={() => goHome("customer")}><Brand /></button>
       <nav className={mobileOpen ? "main-nav open" : "main-nav"}>
-        <button className={portal === "customer" ? "active" : ""} onClick={() => { setPortal("customer"); setMobileOpen(false); }}>
+        <button className={page === "home" && portal === "customer" ? "active" : ""} onClick={() => goHome("customer")}>
           Para conductores
         </button>
-        <button className={portal === "shop" ? "active" : ""} onClick={() => { setPortal("shop"); setMobileOpen(false); }}>
+        <button className={page === "home" && portal === "shop" ? "active" : ""} onClick={() => goHome("shop")}>
           Para talleres
         </button>
-        <button>Cómo funciona</button>
+        <button onClick={() => { setPage("support"); setMobileOpen(false); }}>Soporte</button>
       </nav>
       <div className="top-actions">
         {user ? (
@@ -74,7 +81,7 @@ function TopBar({ portal, setPortal, user, onAuth, onLogout }) {
         ) : (
           <button className="text-button" onClick={onAuth}>Iniciar sesión</button>
         )}
-        <button className="primary small" onClick={() => setPortal(portal === "customer" ? "shop" : "customer")}>
+        <button className="primary small" onClick={() => goHome(portal === "customer" ? "shop" : "customer")}>
           {portal === "customer" ? "Portal del taller" : "Vista del conductor"}
         </button>
       </div>
@@ -176,6 +183,7 @@ function CustomerPortal({ user, onRequireAuth }) {
   const [shopsLoading, setShopsLoading] = useState(false);
   const [shopSource, setShopSource] = useState("demo");
   const [vehicleSaved, setVehicleSaved] = useState(false);
+  const [quoteConsent, setQuoteConsent] = useState(false);
 
   const estimatedTotal = useMemo(() => {
     if (diagnosis?.estimate) {
@@ -221,6 +229,10 @@ function CustomerPortal({ user, onRequireAuth }) {
   };
 
   const requestQuote = async (shopName) => {
+    if (!quoteConsent) {
+      setError("Confirma el aviso de privacidad antes de enviar tu solicitud al taller.");
+      return;
+    }
     setError("");
     try {
       await saveQuoteRequest({
@@ -464,6 +476,12 @@ function CustomerPortal({ user, onRequireAuth }) {
             <h2>Confirma el diagnóstico</h2>
             <p>{shopsLoading ? "Buscando talleres cercanos..." : `Resultados de ${shopSource === "openstreetmap" ? "OpenStreetMap" : "RepairScout"}. Confirma disponibilidad directamente con el taller.`}</p>
           </div>
+          <label className="consent-box">
+            <input type="checkbox" checked={quoteConsent} onChange={(event) => setQuoteConsent(event.target.checked)} />
+            <span>
+              Autorizo que RepairScout envíe mi vehículo, descripción del problema, código postal y rango preliminar al taller que seleccione. Entiendo que la IA no reemplaza una inspección física.
+            </span>
+          </label>
           <div className="shop-grid">
             {availableShops.map((shop) => {
               const requested = requestedShops.includes(shop.name);
@@ -473,7 +491,7 @@ function CustomerPortal({ user, onRequireAuth }) {
                   <p className="specialty">{shop.specialty}</p>
                   <div className="shop-detail"><Clock3 size={16} /><span>Próxima cita<strong>{shop.availability}</strong></span></div>
                   <div className="shop-detail"><CircleDollarSign size={16} /><span>Rango preliminar<strong>{shop.estimate}</strong></span></div>
-                  <button className={requested ? "requested full" : "primary full"} onClick={() => requestQuote(shop.name)}>
+                  <button className={requested ? "requested full" : "primary full"} disabled={!requested && !quoteConsent} onClick={() => requestQuote(shop.name)}>
                     {requested ? <><Check size={17} /> Cotización solicitada</> : <>Solicitar cotización verificada <ChevronRight size={17} /></>}
                   </button>
                 </article>
@@ -626,8 +644,88 @@ function ShopPortal({ user }) {
   );
 }
 
+function LegalPage({ page, setPage }) {
+  const content = {
+    privacy: {
+      icon: ShieldCheck,
+      eyebrow: "Privacidad y datos",
+      title: "Privacidad de RepairScout",
+      intro: "Recopilamos solo la información necesaria para orientar una reparación, guardar tu cuenta y enviar solicitudes a talleres cuando tú lo autorizas.",
+      sections: [
+        ["Datos que guardamos", "Cuenta, vehículo, VIN si lo ingresas, descripción del problema, código postal, diagnósticos preliminares y solicitudes de cotización."],
+        ["Cómo se usa", "Para generar orientación preliminar, buscar talleres, crear solicitudes de cotización y mejorar la seguridad del servicio."],
+        ["Cuándo se comparte", "Solo compartimos los detalles de una solicitud con el taller que eliges. No vendemos información personal."],
+        ["Tus controles", "Puedes pedir corrección o eliminación de tus datos escribiendo a support@repairscout.app. Agregaremos autoservicio de eliminación en una próxima versión."],
+      ],
+    },
+    terms: {
+      icon: FileCheck2,
+      eyebrow: "Términos de uso",
+      title: "Términos de RepairScout",
+      intro: "RepairScout ayuda a organizar información, costos preliminares y comunicación. No reemplaza una inspección profesional ni una cotización final del taller.",
+      sections: [
+        ["Evaluación preliminar", "La IA puede equivocarse. Toda reparación debe verificarse con pruebas físicas, mediciones y revisión profesional."],
+        ["Precios y disponibilidad", "Los rangos de piezas y mano de obra son orientativos hasta conectar proveedores licenciados y confirmación directa del taller."],
+        ["Talleres", "Cada taller es responsable por su diagnóstico, autorización, reparación, garantía y comunicación con el cliente."],
+        ["Uso seguro", "Si hay pérdida de frenos, humo, sobrecalentamiento, olor a combustible o luces rojas, deja de conducir y busca ayuda inmediata."],
+      ],
+    },
+    support: {
+      icon: Headphones,
+      eyebrow: "Soporte",
+      title: "¿Necesitas ayuda con RepairScout?",
+      intro: "Estamos preparando el soporte completo. Por ahora, usa esta página como centro de confianza para clientes, familia, talleres y primeros testers.",
+      sections: [
+        ["Conductores", "Describe el síntoma con detalle, agrega el VIN si lo tienes y solicita cotización solo cuando estés listo para compartir el caso con un taller."],
+        ["Talleres", "Revisa la solicitud como punto de partida, confirma con pruebas y envía una cotización final clara antes de pedir autorización."],
+        ["Contacto", "support@repairscout.app"],
+        ["Próximo paso", "Agregaremos mensajes, eliminación de cuenta, verificación de correo, recuperación de contraseña y seguimiento de citas."],
+      ],
+    },
+  }[page];
+  const Icon = content.icon;
+
+  return (
+    <main className="legal-page">
+      <section className="legal-card">
+        <button className="text-button legal-back" onClick={() => setPage("home")}>← Volver a RepairScout</button>
+        <span className="eyebrow dark"><Icon size={15} /> {content.eyebrow}</span>
+        <h1>{content.title}</h1>
+        <p>{content.intro}</p>
+        <div className="legal-grid">
+          {content.sections.map(([title, body]) => (
+            <article key={title}>
+              <h2>{title}</h2>
+              <p>{body}</p>
+            </article>
+          ))}
+        </div>
+        <div className="legal-warning">
+          <Trash2 size={18} />
+          <span>Para eliminación de datos o preguntas legales, escribe desde el correo de tu cuenta. Esta vista es una versión inicial para el lanzamiento privado.</span>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function Footer({ setPage }) {
+  return (
+    <footer className="site-footer">
+      <Brand />
+      <p>Orientación automotriz preliminar. La reparación final siempre debe ser verificada por un profesional.</p>
+      <nav>
+        <button onClick={() => setPage("privacy")}>Privacidad</button>
+        <button onClick={() => setPage("terms")}>Términos</button>
+        <button onClick={() => setPage("support")}>Soporte</button>
+      </nav>
+    </footer>
+  );
+}
+
 export default function App() {
   const [portal, setPortal] = useState("customer");
+  const [page, setPage] = useState("home");
   const [user, setUser] = useState(null);
   const [authOpen, setAuthOpen] = useState(false);
 
@@ -646,8 +744,13 @@ export default function App() {
 
   return (
     <>
-      {portal === "customer" ? <TopBar portal={portal} setPortal={setPortal} user={user} onAuth={() => setAuthOpen(true)} onLogout={logout} /> : null}
-      {portal === "customer" ? <CustomerPortal user={user} onRequireAuth={() => setAuthOpen(true)} /> : <ShopPortal user={user} />}
+      {portal === "customer" || page !== "home" ? <TopBar portal={portal} setPortal={setPortal} page={page} setPage={setPage} user={user} onAuth={() => setAuthOpen(true)} onLogout={logout} /> : null}
+      {page === "home" ? (
+        portal === "customer" ? <CustomerPortal user={user} onRequireAuth={() => setAuthOpen(true)} /> : <ShopPortal user={user} />
+      ) : (
+        <LegalPage page={page} setPage={setPage} />
+      )}
+      {portal === "customer" || page !== "home" ? <Footer setPage={setPage} /> : null}
       {authOpen ? <AuthModal onClose={() => setAuthOpen(false)} onAuthenticated={setUser} /> : null}
     </>
   );

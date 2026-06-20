@@ -48,6 +48,7 @@ npm run build
 - Nearby verified-shop comparison
 - Quote request confirmation
 - Saved quote requests that appear in the shop portal
+- Privacy, terms, support, and quote-consent screens for private demos
 
 ### Repair-shop portal
 
@@ -59,17 +60,18 @@ npm run build
 - Preliminary quote ranges
 - Evidence-first verification workflow
 - Quote conversion metrics
+- Rate-limited API routes for auth, diagnosis, quote, and general API traffic
 
 ## Data and integration roadmap
 
-1. Authentication and roles for drivers, shop owners, service advisors, and technicians
-2. PostgreSQL data model to replace the current local JSON store
-3. Shop discovery, maps, distance, and geocoding
-4. Licensed labor-time and repair-procedure integration
-5. Parts catalog, fitment, pricing, store availability, and ordering integrations
-6. Photos, videos, OBD-II codes, digital inspections, and technician evidence
-7. Messaging, scheduling, electronic authorization, and payments
-8. Verified repair outcomes, warranties, reviews, and vehicle service history
+1. Email verification, password reset, account deletion, and richer role permissions
+2. Shop discovery with geocoding, maps, distance calculation, and claimed-shop profiles
+3. Licensed labor-time and repair-procedure integration
+4. Parts catalog, fitment, pricing, store availability, and ordering integrations
+5. Photos, videos, OBD-II codes, digital inspections, and technician evidence
+6. Messaging, scheduling, electronic authorization, and payments
+7. Verified repair outcomes, warranties, reviews, and vehicle service history
+8. Monitoring, audit logs, backups, and admin moderation
 
 ## Production configuration
 

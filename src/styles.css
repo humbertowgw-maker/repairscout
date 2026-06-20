@@ -37,6 +37,7 @@ h1, h2, h3, .brand { font-family: "Manrope", sans-serif; }
   backdrop-filter: blur(18px);
 }
 .brand { display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 800; letter-spacing: -.6px; white-space: nowrap; }
+.brand-button { border: 0; background: none; padding: 0; color: inherit; }
 .brand > span:last-child span { color: var(--green); }
 .brand-mark { width: 36px; height: 36px; display: grid; place-items: center; color: white; border-radius: 11px; background: var(--green); transform: rotate(-4deg); }
 .main-nav { display: flex; align-items: center; gap: 8px; margin-left: 7vw; }
@@ -188,6 +189,8 @@ select { width: 100%; padding: 10px; }
 .part-price { align-items: flex-end; font-weight: 800; font-size: 17px !important; }
 .part-price button { border: 0; background: none; color: var(--green); font-size: 11px; font-weight: 800; padding: 0; }
 .shop-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+.consent-box { max-width: 860px; margin: -14px 0 22px; display: flex; align-items: flex-start; gap: 10px; background: #f7faf8; border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; color: #5e6963; font-size: 12px; line-height: 1.45; }
+.consent-box input { width: 17px; height: 17px; margin-top: 1px; accent-color: var(--green); flex: 0 0 auto; }
 .shop-card { background: white; border: 1px solid var(--line); border-radius: 13px; padding: 22px; }
 .shop-card-top { display: flex; gap: 12px; }
 .shop-logo { width: 46px; height: 46px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 10px; background: var(--navy); color: white; font-family: "Manrope"; font-weight: 800; }
@@ -320,6 +323,21 @@ select { width: 100%; padding: 10px; }
 .draft-total { display: flex; justify-content: space-between; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 17px 0; margin: 25px 0; font-size: 12px; }
 .draft-total strong { font-size: 17px; }
 .quote-drawer .outline { margin-top: 10px; }
+.legal-page { min-height: calc(100vh - 76px); padding: 72px max(6vw, 30px); background: linear-gradient(180deg, #f7faf8 0%, #eef4f0 100%); }
+.legal-card { max-width: 980px; margin: auto; background: white; border: 1px solid var(--line); border-radius: 20px; padding: clamp(28px, 5vw, 54px); box-shadow: 0 24px 70px rgba(23,33,29,.08); }
+.legal-back { padding-left: 0; margin-bottom: 26px; }
+.legal-card h1 { font-size: clamp(34px, 5vw, 56px); letter-spacing: -2.3px; margin: 14px 0 12px; }
+.legal-card > p { max-width: 760px; color: var(--muted); font-size: 17px; line-height: 1.7; }
+.legal-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin-top: 32px; }
+.legal-grid article { border: 1px solid var(--line); background: #fbfdfb; border-radius: 14px; padding: 22px; }
+.legal-grid h2 { font-size: 16px; margin-bottom: 8px; }
+.legal-grid p { color: var(--muted); font-size: 13px; line-height: 1.6; margin: 0; }
+.legal-warning { margin-top: 20px; display: flex; gap: 10px; align-items: flex-start; border-radius: 12px; padding: 15px 16px; background: #fff6e8; color: #81511c; font-size: 12px; line-height: 1.5; }
+.site-footer { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 24px; align-items: center; padding: 24px max(5vw, 28px); background: #111f19; color: white; }
+.site-footer .brand > span:last-child span { color: #82cda7; }
+.site-footer p { color: #9eb0a7; font-size: 12px; margin: 0; }
+.site-footer nav { display: flex; gap: 10px; }
+.site-footer button { border: 1px solid #30483d; background: #1a2d25; color: #d8e5de; border-radius: 20px; padding: 8px 12px; font-size: 11px; font-weight: 700; }
 
 @media (max-width: 1050px) {
   .customer-hero { grid-template-columns: 1fr 440px; gap: 35px; }
@@ -353,6 +371,8 @@ select { width: 100%; padding: 10px; }
   .part-price { align-items: flex-start; }
   .shop-grid { grid-template-columns: 1fr; }
   .landing-feature-grid, .audience-grid { grid-template-columns: 1fr; }
+  .legal-grid, .site-footer { grid-template-columns: 1fr; }
+  .site-footer nav { flex-wrap: wrap; }
   .shop-sidebar { width: 74px; flex-basis: 74px; padding: 20px 10px; }
   .shop-sidebar .brand > span:last-child, .shop-identity div, .shop-identity svg, .shop-sidebar nav button:not(.active) i, .shop-sidebar nav button { font-size: 0; }
   .shop-identity div, .shop-identity svg { display: none; }

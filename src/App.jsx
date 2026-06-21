@@ -2335,6 +2335,229 @@ function LegalPage({ page, setPage }) {
   );
 }
 
+function LandingPage({ setPortal, onAuth, setPage }) {
+  const { lang, setLang } = useLang();
+  const isEn = lang === "en";
+
+  const copy = {
+    badge: isEn ? "AI-Powered Auto Repair" : "Reparación automotriz con IA",
+    h1a: isEn ? "Know your car." : "Conoce tu auto.",
+    h1b: isEn ? "Trust your shop." : "Confía en tu taller.",
+    sub: isEn
+      ? "RepairScout diagnoses your vehicle with AI, shows you real local parts pricing, and connects you to trusted shops — all before you spend a dollar."
+      : "RepairScout diagnostica tu vehículo con IA, muestra precios reales de piezas locales y te conecta con talleres de confianza — antes de gastar un centavo.",
+
+    driverLabel: isEn ? "For Drivers" : "Para conductores",
+    driverTitle: isEn ? "Diagnose my car" : "Diagnosticar mi auto",
+    driverSub: isEn ? "Get an AI repair estimate in minutes" : "Obtén una estimación de reparación en minutos",
+
+    shopLabel: isEn ? "For Shops" : "Para talleres",
+    shopTitle: isEn ? "Manage my shop" : "Gestionar mi taller",
+    shopSub: isEn ? "Send quotes, track repairs, close more jobs" : "Envía cotizaciones y cierra más trabajos",
+
+    t1: isEn ? "AI Diagnosis" : "Diagnóstico con IA",
+    t2: isEn ? "Local Pricing" : "Precios locales",
+    t3: isEn ? "Bilingual" : "Bilingüe",
+    t4: isEn ? "Free to start" : "Gratis para empezar",
+
+    pathsTitle: isEn ? "Two portals. One platform." : "Dos portales. Una plataforma.",
+    pathsSub: isEn
+      ? "Whether you drive or turn wrenches, RepairScout works for you."
+      : "Ya sea que manejes o seas mecánico, RepairScout trabaja para ti.",
+
+    driverCardTitle: isEn ? "For Drivers" : "Para conductores",
+    driverCardSub: isEn
+      ? "Know what's wrong, what it costs, and which shop to trust — before you commit."
+      : "Sabe qué está mal, cuánto cuesta y en qué taller confiar — antes de comprometerte.",
+    ds1t: isEn ? "Describe your symptoms" : "Describe tus síntomas",
+    ds1s: isEn ? "Type what you hear, feel, or see" : "Escribe lo que escuchas, sientes o ves",
+    ds2t: isEn ? "Get an AI diagnosis" : "Obtén un diagnóstico con IA",
+    ds2s: isEn ? "Possible causes with urgency ratings" : "Causas posibles con niveles de urgencia",
+    ds3t: isEn ? "Compare local shops" : "Compara talleres locales",
+    ds3s: isEn ? "Real parts pricing, no surprises" : "Precios reales de piezas, sin sorpresas",
+    driverBtn: isEn ? "Start my diagnosis →" : "Iniciar mi diagnóstico →",
+
+    shopCardTitle: isEn ? "For Shop Owners" : "Para dueños de talleres",
+    shopCardSub: isEn
+      ? "Respond to customer requests, send itemized quotes by text or email, and track every repair."
+      : "Responde solicitudes, envía cotizaciones detalladas por texto o correo, y rastrea cada reparación.",
+    ss1t: isEn ? "Receive repair requests" : "Recibe solicitudes de reparación",
+    ss1s: isEn ? "From drivers in your area" : "De conductores en tu área",
+    ss2t: isEn ? "Send itemized quotes" : "Envía cotizaciones detalladas",
+    ss2s: isEn ? "Via SMS or email, parts + labor" : "Por SMS o correo, piezas + mano de obra",
+    ss3t: isEn ? "Track repair progress" : "Rastrea el progreso de reparación",
+    ss3s: isEn ? "6-stage timeline visible to customer" : "Línea de tiempo de 6 etapas visible al cliente",
+    shopBtn: isEn ? "Open shop dashboard →" : "Abrir panel del taller →",
+
+    featTitle: isEn ? "Built for real shops. Built for real drivers." : "Hecho para talleres reales. Para conductores reales.",
+    featSub: isEn
+      ? "Every feature exists because someone needed it."
+      : "Cada función existe porque alguien la necesitó.",
+    feats: isEn ? [
+      { title: "AI-Powered Diagnosis", desc: "Groq & Gemini analyze your symptoms and return probable causes with urgency levels in seconds." },
+      { title: "Local Parts Pricing", desc: "AutoZone, O'Reilly, Advance, NAPA and RockAuto prices compared for every repair — best price and single-store options." },
+      { title: "SMS & Email Quotes", desc: "Shops send itemized quotes directly to customers. Customers approve with one tap." },
+      { title: "Repair Status Tracker", desc: "6-stage repair timeline: Quote Sent → Approved → Parts Ordered → In Progress → Ready → Completed." },
+      { title: "Bilingual EN / ES", desc: "Full English and Spanish support throughout the app — switch at any time." },
+      { title: "VIN Decoder", desc: "Paste a VIN to auto-fill year, make, model, trim, and engine — no manual entry." },
+    ] : [
+      { title: "Diagnóstico con IA", desc: "Groq y Gemini analizan tus síntomas y devuelven causas probables con niveles de urgencia en segundos." },
+      { title: "Precios de piezas locales", desc: "Precios de AutoZone, O'Reilly, Advance, NAPA y RockAuto comparados para cada reparación." },
+      { title: "Cotizaciones por SMS y correo", desc: "Los talleres envían cotizaciones detalladas directamente a los clientes. Los clientes aprueban con un toque." },
+      { title: "Rastreador de estado de reparación", desc: "Línea de tiempo de 6 etapas: Cotización enviada → Aprobada → Piezas ordenadas → En progreso → Lista → Completada." },
+      { title: "Bilingüe EN / ES", desc: "Soporte completo en inglés y español en toda la aplicación — cambia en cualquier momento." },
+      { title: "Decodificador de VIN", desc: "Pega un VIN para autocompletar año, marca, modelo, versión y motor — sin entrada manual." },
+    ],
+
+    bottomTitle: isEn ? "Ready to get started?" : "¿Listo para comenzar?",
+    bottomSub: isEn ? "Free for drivers. Built for shops." : "Gratis para conductores. Hecho para talleres.",
+    login: isEn ? "Sign in" : "Iniciar sesión",
+  };
+
+  const featIcons = [<Bot size={20} />, <PackageSearch size={20} />, <Send size={20} />, <Clock3 size={20} />, <MessageSquareText size={20} />, <Car size={20} />];
+
+  return (
+    <div>
+      {/* Top bar */}
+      <header className="lp-bar">
+        <Brand />
+        <div className="lp-bar-actions">
+          <button className="lp-lang" onClick={() => setLang(lang === "es" ? "en" : "es")}>
+            {lang === "es" ? "EN" : "ES"}
+          </button>
+          <button className="lp-login" onClick={onAuth}>{copy.login}</button>
+        </div>
+      </header>
+
+      {/* Hero */}
+      <section className="lp-hero">
+        <div className="lp-badge">
+          <Sparkles size={13} />
+          {copy.badge}
+        </div>
+        <h1>{copy.h1a}<br /><em>{copy.h1b}</em></h1>
+        <p>{copy.sub}</p>
+
+        <div className="lp-split-cta">
+          <button className="lp-cta-card driver" onClick={() => setPortal("customer")}>
+            <span className="lp-cta-label">{copy.driverLabel}</span>
+            <span className="lp-cta-title"><Car size={18} />{copy.driverTitle}</span>
+            <span className="lp-cta-sub">{copy.driverSub}</span>
+          </button>
+          <button className="lp-cta-card shop" onClick={() => setPortal("shop")}>
+            <span className="lp-cta-label">{copy.shopLabel}</span>
+            <span className="lp-cta-title"><Wrench size={18} />{copy.shopTitle}</span>
+            <span className="lp-cta-sub">{copy.shopSub}</span>
+          </button>
+        </div>
+
+        <div className="lp-trust">
+          <span><Check size={14} />{copy.t1}</span>
+          <span><Check size={14} />{copy.t2}</span>
+          <span><Check size={14} />{copy.t3}</span>
+          <span><Check size={14} />{copy.t4}</span>
+        </div>
+      </section>
+
+      {/* Two paths */}
+      <section className="lp-paths">
+        <div className="lp-paths-head">
+          <div className="eyebrow dark"><Users size={14} />{isEn ? "Choose your path" : "Elige tu camino"}</div>
+          <h2>{copy.pathsTitle}</h2>
+          <p>{copy.pathsSub}</p>
+        </div>
+        <div className="lp-paths-grid">
+          {/* Driver card */}
+          <div className="lp-path-card driver-card">
+            <div className="lp-path-icon"><Car size={24} /></div>
+            <h3>{copy.driverCardTitle}</h3>
+            <p>{copy.driverCardSub}</p>
+            <div className="lp-steps">
+              {[
+                [copy.ds1t, copy.ds1s],
+                [copy.ds2t, copy.ds2s],
+                [copy.ds3t, copy.ds3s],
+              ].map(([t, s], i) => (
+                <div className="lp-step" key={i}>
+                  <span className="lp-step-num">{i + 1}</span>
+                  <div><strong>{t}</strong><span>{s}</span></div>
+                </div>
+              ))}
+            </div>
+            <button className="lp-path-btn" onClick={() => setPortal("customer")}>
+              {copy.driverBtn}
+            </button>
+          </div>
+
+          {/* Shop card */}
+          <div className="lp-path-card shop-card">
+            <div className="lp-path-icon"><Store size={24} /></div>
+            <h3>{copy.shopCardTitle}</h3>
+            <p>{copy.shopCardSub}</p>
+            <div className="lp-steps">
+              {[
+                [copy.ss1t, copy.ss1s],
+                [copy.ss2t, copy.ss2s],
+                [copy.ss3t, copy.ss3s],
+              ].map(([t, s], i) => (
+                <div className="lp-step" key={i}>
+                  <span className="lp-step-num">{i + 1}</span>
+                  <div><strong>{t}</strong><span>{s}</span></div>
+                </div>
+              ))}
+            </div>
+            <button className="lp-path-btn" onClick={() => setPortal("shop")}>
+              {copy.shopBtn}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* Features */}
+      <section className="lp-features">
+        <div className="lp-features-head">
+          <div className="eyebrow dark"><Sparkles size={14} />{isEn ? "Everything you need" : "Todo lo que necesitas"}</div>
+          <h2>{copy.featTitle}</h2>
+          <p>{copy.featSub}</p>
+        </div>
+        <div className="lp-feat-grid">
+          {copy.feats.map((f, i) => (
+            <div className="lp-feat" key={i}>
+              <div className="lp-feat-icon">{featIcons[i]}</div>
+              <h4>{f.title}</h4>
+              <p>{f.desc}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Bottom CTA */}
+      <section className="lp-bottom-cta">
+        <h2>{copy.bottomTitle}</h2>
+        <p>{copy.bottomSub}</p>
+        <div className="lp-bottom-btns">
+          <button className="lp-cta-card driver" onClick={() => setPortal("customer")}>
+            <span className="lp-cta-label">{copy.driverLabel}</span>
+            <span className="lp-cta-title"><Car size={18} />{copy.driverTitle}</span>
+          </button>
+          <button className="lp-cta-card shop" onClick={() => setPortal("shop")}>
+            <span className="lp-cta-label">{copy.shopLabel}</span>
+            <span className="lp-cta-title"><Wrench size={18} />{copy.shopTitle}</span>
+          </button>
+        </div>
+      </section>
+
+      {/* Footer */}
+      <footer className="lp-footer">
+        <Brand />
+        <span>© 2026 RepairScout</span>
+        <button onClick={() => setPage("privacy")}>{isEn ? "Privacy" : "Privacidad"}</button>
+        <button onClick={() => setPage("terms")}>{isEn ? "Terms" : "Términos"}</button>
+      </footer>
+    </div>
+  );
+}
+
 function Footer({ setPage }) {
   const t = useT();
   return (
@@ -2351,7 +2574,7 @@ function Footer({ setPage }) {
 }
 
 export default function App() {
-  const [portal, setPortal] = useState("customer");
+  const [portal, setPortal] = useState("landing");
   const [page, setPage] = useState("home");
   const [user, setUser] = useState(null);
   const [authOpen, setAuthOpen] = useState(false);
@@ -2366,11 +2589,13 @@ export default function App() {
   useEffect(() => {
     if (!window.localStorage.getItem("repairscout_token")) return;
     getCurrentUser()
-      .then(({ user: u }) => setUser(u))
+      .then(({ user: u }) => { setUser(u); setPortal(u.role === "shop" ? "shop" : "customer"); })
       .catch(() => window.localStorage.removeItem("repairscout_token"));
   }, []);
 
-  const logout = () => { window.localStorage.removeItem("repairscout_token"); setUser(null); setPortal("customer"); };
+  const logout = () => { window.localStorage.removeItem("repairscout_token"); setUser(null); setPortal("landing"); };
+
+  const handleSetPortal = (p) => { setPortal(p); setPage("home"); };
 
   return (
     <LangCtx.Provider value={{ lang, setLang }}>
@@ -2392,17 +2617,28 @@ export default function App() {
           </header>
           <TrackPage token={trackToken} />
         </>
+      ) : portal === "landing" && page === "home" ? (
+        <>
+          <LandingPage
+            setPortal={handleSetPortal}
+            onAuth={() => setAuthOpen(true)}
+            setPage={setPage}
+          />
+          {authOpen && <AuthModal onClose={() => setAuthOpen(false)} onAuthenticated={(u) => { setUser(u); setPortal(u.role === "shop" ? "shop" : "customer"); }} />}
+        </>
       ) : (
         <>
-          {(portal === "customer" || page !== "home") && <TopBar portal={portal} setPortal={setPortal} page={page} setPage={setPage} user={user} onAuth={() => setAuthOpen(true)} onLogout={logout} />}
+          {(portal === "customer" || portal === "shop" || page !== "home") && (
+            <TopBar portal={portal} setPortal={handleSetPortal} page={page} setPage={setPage} user={user} onAuth={() => setAuthOpen(true)} onLogout={logout} />
+          )}
           {page === "home"
             ? portal === "customer"
               ? <CustomerPortal user={user} onRequireAuth={() => setAuthOpen(true)} />
               : <ShopPortal user={user} onRequireAuth={() => setAuthOpen(true)} />
             : <LegalPage page={page} setPage={setPage} />
           }
-          {(portal === "customer" || page !== "home") && <Footer setPage={setPage} />}
-          {authOpen && <AuthModal onClose={() => setAuthOpen(false)} onAuthenticated={setUser} />}
+          {(portal === "customer" || portal === "shop" || page !== "home") && <Footer setPage={setPage} />}
+          {authOpen && <AuthModal onClose={() => setAuthOpen(false)} onAuthenticated={(u) => { setUser(u); setPortal(u.role === "shop" ? "shop" : "customer"); }} />}
         </>
       )}
     </LangCtx.Provider>

@@ -421,6 +421,8 @@ select { width: 100%; padding: 10px; }
   .ai-workbench button { grid-column: 1 / -1; justify-content: center; }
 }
 
+@keyframes spin { to { transform: rotate(360deg); } }
+
 /* ── Landing page ─────────────────────────────────────────────────────────── */
 .lp-bar {
   height: 72px;

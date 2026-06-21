@@ -43,6 +43,7 @@ import {
   buildPartsQuote,
   createDiagnosis,
   decodeVin,
+  getDiagnoseResult,
   getCurrentUser,
   getQuoteRequests,
   getSentQuotes,
@@ -51,13 +52,17 @@ import {
   getTrackingInfo,
   loginAccount,
   registerAccount,
+  runFreeDiagnosis,
   saveShopProfile,
   saveQuoteRequest,
   saveVehicle,
   searchShops,
   sendItemizedQuote,
+  sendOtp,
+  startCheckout,
   updateQuoteRequestStatus,
   updateRepairStage,
+  verifyOtp,
 } from "./api";
 import { T, confidenceDisplay, safetyLevelDisplay, statusDisplay, quoteStatusKeys } from "./i18n";
 
@@ -1307,6 +1312,227 @@ function TrackPage({ token }) {
   );
 }
 
+/* ── Phone OTP Modal ── */
+
+function PhoneOtpModal({ diagnosisInput, onFreeResult, onClose }) {
+  const { lang } = useLang();
+  const isEn = lang === "en";
+  const [step, setStep] = useState("phone"); // phone | code | loading | paying
+  const [phone, setPhone] = useState("");
+  const [code, setCode] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const handleSend = async () => {
+    if (!phone.trim()) return;
+    setBusy(true); setError("");
+    try {
+      await sendOtp(phone.trim());
+      setStep("code");
+    } catch (e) { setError(e.message); }
+    finally { setBusy(false); }
+  };
+
+  const handleVerify = async () => {
+    if (!code.trim()) return;
+    setBusy(true); setError("");
+    try {
+      const res = await verifyOtp(phone.trim(), code.trim());
+      if (res.freeEligible) {
+        setStep("loading");
+        const { result } = await runFreeDiagnosis({ ...diagnosisInput, phone: phone.trim() });
+        onFreeResult(result);
+      } else {
+        setStep("paying");
+        const { url } = await startCheckout({ ...diagnosisInput, phone: phone.trim() });
+        window.location.href = url;
+      }
+    } catch (e) {
+      if (e.message?.includes("requiresPayment") || e.message?.includes("402")) {
+        setStep("paying");
+        try {
+          const { url } = await startCheckout({ ...diagnosisInput, phone: phone.trim() });
+          window.location.href = url;
+        } catch (e2) { setError(e2.message); setStep("code"); }
+      } else {
+        setError(e.message);
+      }
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ background: "white", borderRadius: 16, padding: 32, maxWidth: 420, width: "100%", boxShadow: "0 24px 60px rgba(0,0,0,.22)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1, color: "#1f7251", textTransform: "uppercase", marginBottom: 4 }}>
+              {isEn ? "Verify your number" : "Verifica tu número"}
+            </div>
+            <h3 style={{ margin: 0, fontSize: 20 }}>
+              {step === "phone" && (isEn ? "Enter your phone" : "Ingresa tu teléfono")}
+              {step === "code"  && (isEn ? "Enter the code" : "Ingresa el código")}
+              {step === "loading" && (isEn ? "Running diagnosis…" : "Generando diagnóstico…")}
+              {step === "paying" && (isEn ? "Redirecting to payment…" : "Redirigiendo al pago…")}
+            </h3>
+          </div>
+          <button onClick={onClose} style={{ border: 0, background: "none", cursor: "pointer", color: "#69736e" }}><X size={20} /></button>
+        </div>
+
+        {step === "phone" && (
+          <>
+            <p style={{ color: "#69736e", fontSize: 13, marginBottom: 20 }}>
+              {isEn
+                ? "Your first diagnosis is free. We'll send a 6-digit code to confirm your number."
+                : "Tu primer diagnóstico es gratis. Te enviaremos un código de 6 dígitos para confirmar tu número."}
+            </p>
+            {error && <div className="form-error">{error}</div>}
+            <label>{isEn ? "Phone number" : "Número de teléfono"}</label>
+            <input
+              className="plain-input"
+              style={{ width: "100%", marginBottom: 16, padding: "11px 13px", borderRadius: 8, border: "1px solid #dfe5e1" }}
+              type="tel"
+              placeholder="(916) 555-0100"
+              value={phone}
+              onChange={e => setPhone(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleSend()}
+            />
+            <button className="primary full" onClick={handleSend} disabled={busy || !phone.trim()}>
+              {busy ? (isEn ? "Sending…" : "Enviando…") : (isEn ? "Send code" : "Enviar código")}
+            </button>
+          </>
+        )}
+
+        {step === "code" && (
+          <>
+            <p style={{ color: "#69736e", fontSize: 13, marginBottom: 20 }}>
+              {isEn ? `Code sent to ${phone}. Enter it below.` : `Código enviado a ${phone}. Ingrésalo abajo.`}
+            </p>
+            {error && <div className="form-error">{error}</div>}
+            <label>{isEn ? "6-digit code" : "Código de 6 dígitos"}</label>
+            <input
+              className="plain-input"
+              style={{ width: "100%", marginBottom: 8, padding: "11px 13px", borderRadius: 8, border: "1px solid #dfe5e1", letterSpacing: 6, fontSize: 22, textAlign: "center" }}
+              type="text"
+              inputMode="numeric"
+              maxLength={6}
+              placeholder="------"
+              value={code}
+              onChange={e => setCode(e.target.value.replace(/\D/g, ""))}
+              onKeyDown={e => e.key === "Enter" && handleVerify()}
+            />
+            <button style={{ background: "none", border: 0, color: "#1f7251", fontSize: 12, fontWeight: 700, padding: "4px 0 16px", cursor: "pointer" }} onClick={() => { setStep("phone"); setCode(""); setError(""); }}>
+              {isEn ? "← Change number" : "← Cambiar número"}
+            </button>
+            <button className="primary full" onClick={handleVerify} disabled={busy || code.length < 6}>
+              {busy ? (isEn ? "Verifying…" : "Verificando…") : (isEn ? "Verify & continue" : "Verificar y continuar")}
+            </button>
+          </>
+        )}
+
+        {(step === "loading" || step === "paying") && (
+          <div style={{ textAlign: "center", padding: "24px 0", color: "#69736e" }}>
+            <div style={{ width: 36, height: 36, border: "3px solid #dfe5e1", borderTopColor: "#1f7251", borderRadius: "50%", animation: "spin 1s linear infinite", margin: "0 auto 16px" }} />
+            <p style={{ margin: 0, fontSize: 14 }}>
+              {step === "loading"
+                ? (isEn ? "Running your AI diagnosis…" : "Generando tu diagnóstico con IA…")
+                : (isEn ? "Redirecting to secure payment…" : "Redirigiendo al pago seguro…")}
+            </p>
+          </div>
+        )}
+
+        <p style={{ fontSize: 11, color: "#a0a7a3", textAlign: "center", marginTop: 16, marginBottom: 0 }}>
+          {isEn ? "🔒 Secured by Twilio & Stripe" : "🔒 Protegido por Twilio y Stripe"}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/* ── Diagnose Result Page (post-Stripe return) ── */
+
+function DiagnoseResultPage({ pendingId }) {
+  const { lang } = useLang();
+  const isEn = lang === "en";
+  const [state, setState] = useState({ ready: false, result: null, vehicle: null, error: "" });
+
+  useEffect(() => {
+    let attempts = 0;
+    const poll = async () => {
+      try {
+        const data = await getDiagnoseResult(pendingId);
+        if (data.ready) { setState({ ready: true, result: data.result, vehicle: data.vehicle, error: "" }); return; }
+        if (attempts++ < 20) setTimeout(poll, 3000);
+        else setState(s => ({ ...s, error: isEn ? "Taking longer than expected. Please refresh." : "Está tardando más de lo esperado. Recarga la página." }));
+      } catch (e) {
+        setState(s => ({ ...s, error: e.message }));
+      }
+    };
+    poll();
+  }, [pendingId]);
+
+  const confMap = confidenceDisplay[lang] || confidenceDisplay.es;
+
+  return (
+    <main>
+      <section className="results-section" style={{ maxWidth: 860, margin: "0 auto", paddingTop: 48 }}>
+        {!state.ready && !state.error && (
+          <div style={{ textAlign: "center", padding: "60px 0" }}>
+            <div style={{ width: 44, height: 44, border: "4px solid #dfe5e1", borderTopColor: "#1f7251", borderRadius: "50%", animation: "spin 1s linear infinite", margin: "0 auto 20px" }} />
+            <h2 style={{ fontSize: 22, marginBottom: 8 }}>{isEn ? "Generating your diagnosis…" : "Generando tu diagnóstico…"}</h2>
+            <p style={{ color: "#69736e" }}>{isEn ? "This usually takes 10–20 seconds." : "Esto suele tardar entre 10 y 20 segundos."}</p>
+          </div>
+        )}
+        {state.error && (
+          <div className="form-error" style={{ maxWidth: 500, margin: "60px auto" }}>{state.error}</div>
+        )}
+        {state.ready && state.result && (
+          <>
+            <div className="section-heading">
+              <div className="eyebrow dark"><Check size={14} />{isEn ? "Payment confirmed — here's your diagnosis" : "Pago confirmado — aquí está tu diagnóstico"}</div>
+              <h2>{isEn ? "AI Diagnosis" : "Diagnóstico con IA"}</h2>
+              {state.vehicle && <p style={{ color: "#69736e" }}>{state.vehicle.year} {state.vehicle.make} {state.vehicle.model}</p>}
+            </div>
+            <div className="diagnosis-layout">
+              <div className="diagnosis-list">
+                {(state.result.possibleCauses || []).map((cause, i) => (
+                  <div key={i} className={`diagnosis-card${i === 0 ? " featured" : ""}`}>
+                    <div className={`probability${cause.tone === "danger" ? " danger" : cause.tone === "warn" ? " warn" : ""}`}>
+                      <strong>{Math.round((cause.probability || 0.5) * 100)}%</strong>
+                      <span>{isEn ? "likely" : "prob."}</span>
+                    </div>
+                    <div className="diagnosis-copy">
+                      <div className="title-line">
+                        <h3>{cause.title}</h3>
+                        <span className={`status${cause.tone === "danger" ? " danger" : cause.tone === "warn" ? " warn" : ""}`}>{cause.urgency === "high" ? (isEn ? "Urgent" : "Urgente") : cause.urgency === "medium" ? (isEn ? "Soon" : "Pronto") : (isEn ? "Monitor" : "Monitorear")}</span>
+                      </div>
+                      <p>{cause.reason}</p>
+                      {cause.test && <small><Search size={11} />{cause.test}</small>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {state.result.estimate && (
+                <div className="estimate-card">
+                  <div className="eyebrow">{isEn ? "Estimated Repair Cost" : "Costo estimado de reparación"}</div>
+                  <div className="big-price">${state.result.estimate.low}–${state.result.estimate.high}</div>
+                  <div className="confidence">
+                    <span>{isEn ? "Confidence" : "Confianza"}</span>
+                    <strong>{confMap[state.result.estimate.confidence] || state.result.estimate.confidence}</strong>
+                    <div><i /></div>
+                  </div>
+                  <button className="primary full" style={{ marginTop: 8 }} onClick={() => { window.location.href = "/"; }}>
+                    {isEn ? "Get shop quotes →" : "Obtener cotizaciones →"}
+                  </button>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </section>
+    </main>
+  );
+}
+
 /* ── Customer portal ── */
 
 function CustomerPortal({ user, onRequireAuth }) {
@@ -1345,6 +1571,7 @@ function CustomerPortal({ user, onRequireAuth }) {
   const [partsQuoteError, setPartsQuoteError] = useState("");
   const [selectedQuoteOption, setSelectedQuoteOption] = useState("combo");
   const [sendQuoteOpen, setSendQuoteOpen] = useState(false);
+  const [otpOpen, setOtpOpen] = useState(false);
 
   const estimatedTotal = useMemo(() => {
     if (diagnosis?.estimate) return { low: diagnosis.estimate.low, high: diagnosis.estimate.high };
@@ -1361,15 +1588,16 @@ function CustomerPortal({ user, onRequireAuth }) {
     finally { setVinLoading(false); }
   };
 
-  const runAssessment = async () => {
+  const runAssessment = () => {
     if (!description.trim()) return;
-    setError(""); setLoading(true);
-    try {
-      const result = await createDiagnosis({ vehicle, mileage, description, zip, language: lang });
-      setDiagnosis(result);
-      setStep(1);
-    } catch (e) { setError(e.message); }
-    finally { setLoading(false); }
+    setError("");
+    setOtpOpen(true);
+  };
+
+  const onFreeResult = (result) => {
+    setOtpOpen(false);
+    setDiagnosis(result);
+    setStep(1);
   };
 
   const requestQuote = async (shopName) => {
@@ -1423,6 +1651,13 @@ function CustomerPortal({ user, onRequireAuth }) {
 
   return (
     <main>
+      {otpOpen && (
+        <PhoneOtpModal
+          diagnosisInput={{ vehicle, mileage, description, zip, language: lang }}
+          onFreeResult={onFreeResult}
+          onClose={() => setOtpOpen(false)}
+        />
+      )}
       <section className="customer-hero">
         <div className="hero-copy">
           <div className="eyebrow"><Sparkles size={15} /> {t("heroEyebrow")}</div>
@@ -2580,10 +2815,16 @@ export default function App() {
   const [authOpen, setAuthOpen] = useState(false);
   const [lang, setLang] = useState("es");
 
-  // Detect tracking token in URL path: /track/:token
+  // Detect /track/:token URL
   const [trackToken] = useState(() => {
     const match = window.location.pathname.match(/^\/track\/([a-f0-9]{20,})$/i);
     return match ? match[1] : null;
+  });
+
+  // Detect /diagnose/result?pid=xxx URL (post-Stripe return)
+  const [diagnosePendingId] = useState(() => {
+    if (window.location.pathname !== "/diagnose/result") return null;
+    return new URLSearchParams(window.location.search).get("pid") || null;
   });
 
   useEffect(() => {
@@ -2599,23 +2840,19 @@ export default function App() {
 
   return (
     <LangCtx.Provider value={{ lang, setLang }}>
-      {trackToken ? (
+      {(trackToken || diagnosePendingId) ? (
         <>
           <header className="topbar" style={{ justifyContent: "space-between" }}>
             <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ color: "#f97316" }}><Wrench size={18} strokeWidth={2.5} /></span>
-              <span style={{ fontWeight: 700, color: "#f1f5f9" }}>RepairScout</span>
+              <span style={{ color: "#1f7251" }}><Wrench size={18} strokeWidth={2.5} /></span>
+              <span style={{ fontWeight: 700, color: "#17211d" }}>Repair<span style={{ color: "#1f7251" }}>Scout</span></span>
             </span>
             <button
               onClick={() => setLang(lang === "es" ? "en" : "es")}
-              style={{
-                fontSize: 11, fontWeight: 700, padding: "5px 11px",
-                borderRadius: 6, border: "1px solid #1e2d47", background: "transparent",
-                color: "#94a3b8", cursor: "pointer", fontFamily: "inherit",
-              }}
+              style={{ fontSize: 11, fontWeight: 700, padding: "5px 11px", borderRadius: 6, border: "1px solid #dfe5e1", background: "transparent", color: "#69736e", cursor: "pointer", fontFamily: "inherit" }}
             >{lang === "es" ? "EN" : "ES"}</button>
           </header>
-          <TrackPage token={trackToken} />
+          {trackToken ? <TrackPage token={trackToken} /> : <DiagnoseResultPage pendingId={diagnosePendingId} />}
         </>
       ) : portal === "landing" && page === "home" ? (
         <>

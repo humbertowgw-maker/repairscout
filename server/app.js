@@ -9,32 +9,46 @@ import { authConfigured, createToken, hashPassword, optionalAuth, requireAuth, v
 import {
   approveQuoteByToken,
   createItemizedQuote,
+  createPendingDiagnosis,
   createQuoteRequest,
   createUser,
   createVehicle,
   databaseMode,
   findUserByEmail,
   getItemizedQuoteByToken,
+  getPendingDiagnosis,
+  getPhoneVerification,
   getShopProfile,
   listQuoteRequests,
   listSentQuotes,
   listVehicles,
+  markPhoneUsedFree,
+  markPhoneVerified,
   saveDiagnosis,
+  setPendingDiagnosisPaid,
+  setPendingDiagnosisResult,
   updateQuoteRequestStatus,
   updateRepairStage,
+  upsertPhoneVerification,
   upsertShopProfile,
 } from "./database.js";
 import { diagnoseVehicle, getDiagnosisProviderStatus } from "./diagnosis.js";
 import { buildQuoteFromDiagnosis } from "./parts.js";
 import { sendQuoteNotification } from "./notify.js";
 import { searchRepairShops } from "./shops.js";
+import { generateOtp, normalizePhone, OTP_TTL_MS, sendOtpSms } from "./otp.js";
+import { constructWebhookEvent, createDiagnosisCheckout } from "./stripe.js";
 
 const app = express();
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const projectDir = path.resolve(currentDir, "..");
 
 app.use(cors());
-app.use(express.json({ limit: "1mb" }));
+// Capture raw body for Stripe webhook signature verification
+app.use(express.json({
+  limit: "1mb",
+  verify: (req, _res, buf) => { req.rawBody = buf; },
+}));
 
 app.set("trust proxy", 1);
 app.use((_request, response, next) => {
@@ -499,9 +513,179 @@ app.patch("/api/quotes/:id/repair-stage", requireAuth, async (request, response)
   response.json({ quote: updated });
 });
 
+// ── OTP: send code ────────────────────────────────────────────────────────────
+
+app.use("/api/otp", rateLimit({ key: "otp", windowMs: 15 * 60 * 1000, max: 10 }));
+
+app.post("/api/otp/send", async (request, response) => {
+  const raw = String(request.body?.phone || "").trim();
+  if (!raw) return response.status(400).json({ error: "Ingresa un número de teléfono." });
+
+  const phone = normalizePhone(raw);
+  if (phone.length < 10) return response.status(400).json({ error: "Número de teléfono inválido." });
+
+  const code = generateOtp();
+  const expiresAt = new Date(Date.now() + OTP_TTL_MS).toISOString();
+
+  await upsertPhoneVerification({ phone, code, expiresAt });
+
+  try {
+    await sendOtpSms(phone, code);
+  } catch (e) {
+    console.error("[otp/send] error:", e.message);
+    return response.status(502).json({ error: "No pudimos enviar el código. Verifica el número e inténtalo de nuevo." });
+  }
+
+  return response.json({ sent: true, phone });
+});
+
+// ── OTP: verify code ──────────────────────────────────────────────────────────
+
+app.post("/api/otp/verify", async (request, response) => {
+  const raw   = String(request.body?.phone || "").trim();
+  const code  = String(request.body?.code  || "").trim();
+  if (!raw || !code) return response.status(400).json({ error: "Faltan datos." });
+
+  const phone = normalizePhone(raw);
+  const record = await getPhoneVerification(phone);
+
+  if (!record) return response.status(404).json({ error: "Envía el código primero." });
+  if (new Date(record.codeExpiresAt) < new Date()) return response.status(410).json({ error: "El código expiró. Solicita uno nuevo." });
+  if (record.code !== code) return response.status(422).json({ error: "Código incorrecto." });
+
+  await markPhoneVerified(phone);
+
+  return response.json({
+    verified: true,
+    phone,
+    freeEligible: !record.usedFree,
+  });
+});
+
+// ── Checkout: start Stripe session ───────────────────────────────────────────
+
+app.use("/api/checkout", rateLimit({ key: "checkout", windowMs: 15 * 60 * 1000, max: 20 }));
+
+const checkoutStartInput = z.object({
+  phone: z.string().min(7).max(20),
+  vehicle: z.record(z.string(), z.any()).optional(),
+  mileage: z.string().max(30).optional(),
+  description: z.string().min(8).max(2000),
+  zip: z.string().min(5).max(10),
+  language: z.string().max(5).optional(),
+});
+
+app.post("/api/checkout/start", async (request, response) => {
+  const parsed = checkoutStartInput.safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: "Faltan datos para iniciar el pago." });
+
+  const { phone, vehicle, mileage, description, zip, language } = parsed.data;
+  const normalizedPhone = normalizePhone(phone);
+
+  const verification = await getPhoneVerification(normalizedPhone);
+  if (!verification?.verified) {
+    return response.status(403).json({ error: "Verifica tu teléfono primero." });
+  }
+
+  const id = crypto.randomUUID();
+  await createPendingDiagnosis({ id, phone: normalizedPhone, vehicle: vehicle || {}, mileage, description, zip, language: language || "es" });
+
+  try {
+    const session = await createDiagnosisCheckout({ pendingId: id, phone: normalizedPhone });
+    return response.json({ url: session.url, pendingId: id });
+  } catch (e) {
+    console.error("[checkout/start] Stripe error:", e.message);
+    return response.status(502).json({ error: "No pudimos iniciar el pago. Intenta de nuevo." });
+  }
+});
+
+// ── Free diagnosis: run immediately after OTP (first-time only) ───────────────
+
+const freeDiagInput = z.object({
+  phone: z.string().min(7).max(20),
+  vehicle: z.record(z.string(), z.any()).optional(),
+  mileage: z.string().max(30).optional(),
+  description: z.string().min(8).max(2000),
+  zip: z.string().min(5).max(10),
+  language: z.string().max(5).optional(),
+});
+
+app.post("/api/diagnose/free", rateLimit({ key: "diagnose", windowMs: 15 * 60 * 1000, max: 30 }), async (request, response) => {
+  const parsed = freeDiagInput.safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: "Faltan datos para el diagnóstico." });
+
+  const { phone, vehicle, mileage, description, zip, language } = parsed.data;
+  const normalizedPhone = normalizePhone(phone);
+
+  const verification = await getPhoneVerification(normalizedPhone);
+  if (!verification?.verified) return response.status(403).json({ error: "Verifica tu teléfono primero." });
+  if (verification.usedFree) return response.status(402).json({ error: "Ya usaste tu diagnóstico gratuito.", requiresPayment: true });
+
+  try {
+    await markPhoneUsedFree(normalizedPhone);
+    const result = await diagnoseVehicle({ vehicle: vehicle || {}, mileage, description, zip, language: language || "es" });
+    await saveDiagnosis({ id: crypto.randomUUID(), userId: request.user?.id || null, vehicle: vehicle || {}, description, zip, result, createdAt: new Date().toISOString() });
+    return response.json({ result, free: true });
+  } catch (e) {
+    console.error("[diagnose/free] error:", e.message);
+    return response.status(502).json({ error: "No pudimos generar el diagnóstico." });
+  }
+});
+
+// ── Stripe webhook ────────────────────────────────────────────────────────────
+
+app.post("/api/stripe/webhook", async (request, response) => {
+  const sig = request.headers["stripe-signature"];
+  let event;
+  try {
+    event = constructWebhookEvent(request.rawBody, sig);
+  } catch (e) {
+    console.error("[stripe/webhook] signature error:", e.message);
+    return response.status(400).json({ error: `Webhook error: ${e.message}` });
+  }
+
+  if (event.type === "checkout.session.completed") {
+    const session = event.data.object;
+    const { pendingId, phone } = session.metadata || {};
+    if (pendingId) {
+      await setPendingDiagnosisPaid(pendingId, session.id).catch(console.error);
+      const pending = await getPendingDiagnosis(pendingId).catch(() => null);
+      if (pending && !pending.result) {
+        try {
+          const result = await diagnoseVehicle({
+            vehicle: pending.vehicle || {},
+            mileage: pending.mileage,
+            description: pending.description,
+            zip: pending.zip,
+            language: pending.language || "es",
+          });
+          await setPendingDiagnosisResult(pendingId, result);
+          await saveDiagnosis({ id: crypto.randomUUID(), userId: null, vehicle: pending.vehicle || {}, description: pending.description, zip: pending.zip, result, createdAt: new Date().toISOString() });
+        } catch (e) {
+          console.error("[stripe/webhook] diagnosis error:", e.message);
+        }
+      }
+    }
+  }
+
+  response.json({ received: true });
+});
+
+// ── Pending diagnosis result (poll after Stripe) ──────────────────────────────
+
+app.get("/api/diagnose/result/:id", async (request, response) => {
+  const id = request.params.id?.trim();
+  if (!id) return response.status(400).json({ error: "ID inválido." });
+  const pending = await getPendingDiagnosis(id).catch(() => null);
+  if (!pending) return response.status(404).json({ error: "No encontramos ese diagnóstico." });
+  if (!pending.paid) return response.status(402).json({ error: "Pago pendiente.", pending: true });
+  if (!pending.result) return response.json({ ready: false, paid: true });
+  return response.json({ ready: true, paid: true, result: pending.result, vehicle: pending.vehicle });
+});
+
 if (process.env.VERCEL !== "1") {
   app.use(express.static(path.join(projectDir, "dist")));
-  // SPA fallback — also handles /track/:token routes
+  // SPA fallback — also handles /track/:token and /diagnose/result routes
   app.get("*", (request, response, next) => {
     if (request.path.startsWith("/api/")) return next();
     response.sendFile(path.join(projectDir, "dist", "index.html"));

@@ -1,7 +1,8 @@
 // Notification layer — email via Resend, SMS via Twilio
 // Falls back to console simulation when keys are not configured
 
-const RESEND_KEY = process.env.RESEND_API_KEY;
+const RESEND_KEY  = process.env.RESEND_API_KEY;
+const RESEND_FROM = process.env.RESEND_FROM_EMAIL || "repairscout@whiteglovewireless.com";
 const TWILIO_SID = process.env.TWILIO_ACCOUNT_SID;
 const TWILIO_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_FROM = process.env.TWILIO_FROM_NUMBER;
@@ -131,7 +132,7 @@ async function sendEmail({ to, subject, html }) {
       Authorization: `Bearer ${RESEND_KEY}`,
     },
     body: JSON.stringify({
-      from: "RepairScout <quotes@repairscout.app>",
+      from: `RepairScout <${RESEND_FROM}>`,
       to: [to],
       subject,
       html,

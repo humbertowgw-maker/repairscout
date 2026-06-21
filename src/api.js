@@ -129,3 +129,23 @@ export function updateRepairStage(quoteId, stage) {
     body: JSON.stringify({ stage }),
   });
 }
+
+export function sendOtp(phone) {
+  return request("/api/otp/send", { method: "POST", body: JSON.stringify({ phone }) });
+}
+
+export function verifyOtp(phone, code) {
+  return request("/api/otp/verify", { method: "POST", body: JSON.stringify({ phone, code }) });
+}
+
+export function runFreeDiagnosis(input) {
+  return request("/api/diagnose/free", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function startCheckout(input) {
+  return request("/api/checkout/start", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function getDiagnoseResult(pendingId) {
+  return request(`/api/diagnose/result/${encodeURIComponent(pendingId)}`);
+}

@@ -101,6 +101,32 @@ async function ensureDatabase() {
       sent_at timestamptz,
       created_at timestamptz not null default now()
     );
+
+    create table if not exists phone_verifications (
+      phone text primary key,
+      code text not null,
+      code_expires_at timestamptz not null,
+      verified boolean not null default false,
+      used_free boolean not null default false,
+      free_used_at timestamptz,
+      created_at timestamptz not null default now()
+    );
+
+    create table if not exists pending_diagnoses (
+      id uuid primary key,
+      phone text not null,
+      vehicle jsonb not null default '{}',
+      mileage text,
+      description text not null,
+      zip text not null,
+      language text not null default 'es',
+      stripe_session_id text,
+      paid boolean not null default false,
+      paid_at timestamptz,
+      result jsonb,
+      completed_at timestamptz,
+      created_at timestamptz not null default now()
+    );
   `);
 
   initialized = true;
@@ -509,4 +535,159 @@ export async function updateQuoteRequestStatus({ id, shopName, status }) {
     }),
   }));
   return updatedQuote;
+}
+
+// ── Phone OTP ────────────────────────────────────────────────────────────────
+
+export async function upsertPhoneVerification({ phone, code, expiresAt }) {
+  if (pool) {
+    await ensureDatabase();
+    await pool.query(
+      `insert into phone_verifications (phone, code, code_expires_at, verified, used_free)
+       values ($1, $2, $3, false, false)
+       on conflict (phone) do update
+         set code = excluded.code,
+             code_expires_at = excluded.code_expires_at,
+             verified = false`,
+      [phone, code, expiresAt],
+    );
+    return;
+  }
+  await updateStore((store) => ({
+    ...store,
+    phoneVerifications: {
+      ...(store.phoneVerifications || {}),
+      [phone]: { phone, code, expiresAt, verified: false, usedFree: (store.phoneVerifications?.[phone]?.usedFree ?? false) },
+    },
+  }));
+}
+
+export async function getPhoneVerification(phone) {
+  if (pool) {
+    await ensureDatabase();
+    const r = await pool.query("select * from phone_verifications where phone = $1", [phone]);
+    if (!r.rows[0]) return null;
+    const row = r.rows[0];
+    return {
+      phone: row.phone,
+      code: row.code,
+      codeExpiresAt: row.code_expires_at,
+      verified: row.verified,
+      usedFree: row.used_free,
+    };
+  }
+  const store = await readStore();
+  return (store.phoneVerifications || {})[phone] || null;
+}
+
+export async function markPhoneVerified(phone) {
+  if (pool) {
+    await ensureDatabase();
+    await pool.query("update phone_verifications set verified = true where phone = $1", [phone]);
+    return;
+  }
+  await updateStore((store) => ({
+    ...store,
+    phoneVerifications: {
+      ...(store.phoneVerifications || {}),
+      [phone]: { ...(store.phoneVerifications?.[phone] || {}), verified: true },
+    },
+  }));
+}
+
+export async function markPhoneUsedFree(phone) {
+  const now = new Date().toISOString();
+  if (pool) {
+    await ensureDatabase();
+    await pool.query(
+      "update phone_verifications set used_free = true, free_used_at = $2 where phone = $1",
+      [phone, now],
+    );
+    return;
+  }
+  await updateStore((store) => ({
+    ...store,
+    phoneVerifications: {
+      ...(store.phoneVerifications || {}),
+      [phone]: { ...(store.phoneVerifications?.[phone] || {}), usedFree: true, freeUsedAt: now },
+    },
+  }));
+}
+
+// ── Pending diagnoses (Stripe flow) ──────────────────────────────────────────
+
+export async function createPendingDiagnosis({ id, phone, vehicle, mileage, description, zip, language }) {
+  if (pool) {
+    await ensureDatabase();
+    await pool.query(
+      `insert into pending_diagnoses (id, phone, vehicle, mileage, description, zip, language)
+       values ($1, $2, $3, $4, $5, $6, $7)`,
+      [id, phone, JSON.stringify(vehicle), mileage, description, zip, language],
+    );
+    return { id, phone, vehicle, mileage, description, zip, language, paid: false, result: null };
+  }
+  const record = { id, phone, vehicle, mileage, description, zip, language, paid: false, result: null, createdAt: new Date().toISOString() };
+  await updateStore((store) => ({
+    ...store,
+    pendingDiagnoses: { ...(store.pendingDiagnoses || {}), [id]: record },
+  }));
+  return record;
+}
+
+export async function getPendingDiagnosis(id) {
+  if (pool) {
+    await ensureDatabase();
+    const r = await pool.query("select * from pending_diagnoses where id = $1", [id]);
+    if (!r.rows[0]) return null;
+    const row = r.rows[0];
+    return {
+      id: row.id, phone: row.phone,
+      vehicle: row.vehicle, mileage: row.mileage,
+      description: row.description, zip: row.zip, language: row.language,
+      stripeSessionId: row.stripe_session_id,
+      paid: row.paid, paidAt: row.paid_at,
+      result: row.result, completedAt: row.completed_at,
+      createdAt: row.created_at,
+    };
+  }
+  const store = await readStore();
+  return (store.pendingDiagnoses || {})[id] || null;
+}
+
+export async function setPendingDiagnosisPaid(id, stripeSessionId) {
+  const now = new Date().toISOString();
+  if (pool) {
+    await ensureDatabase();
+    await pool.query(
+      "update pending_diagnoses set paid = true, paid_at = $2, stripe_session_id = $3 where id = $1",
+      [id, now, stripeSessionId],
+    );
+    return;
+  }
+  await updateStore((store) => ({
+    ...store,
+    pendingDiagnoses: {
+      ...(store.pendingDiagnoses || {}),
+      [id]: { ...(store.pendingDiagnoses?.[id] || {}), paid: true, paidAt: now, stripeSessionId },
+    },
+  }));
+}
+
+export async function setPendingDiagnosisResult(id, result) {
+  const now = new Date().toISOString();
+  if (pool) {
+    await ensureDatabase();
+    await pool.query(
+      "update pending_diagnoses set result = $2, completed_at = $3 where id = $1",
+      [id, JSON.stringify(result), now],
+    );
+    return;
+  }
+  await updateStore((store) => ({
+    ...store,
+    pendingDiagnoses: {
+      ...(store.pendingDiagnoses || {}),
+      [id]: { ...(store.pendingDiagnoses?.[id] || {}), result, completedAt: now },
+    },
+  }));
 }

@@ -169,6 +169,52 @@ async function sendSms({ to, body }) {
   return res.json();
 }
 
+export async function sendShopApprovalNotification({ shopPhone, shopEmail, customerName, vehicle, appUrl }) {
+  const msg = `RepairScout: ${customerName} approved their repair quote for ${vehicle}. Log in to create the work order: ${appUrl}`;
+  const results = {};
+
+  if (shopPhone) {
+    const normalized = shopPhone.replace(/\D/g, "");
+    const e164 = normalized.startsWith("1") ? `+${normalized}` : `+1${normalized}`;
+    try { results.sms = await sendSms({ to: e164, body: msg }); }
+    catch (e) { console.error("[notify] shop sms error:", e.message); results.shopSmsError = e.message; }
+  }
+
+  if (shopEmail) {
+    const html = `<p style="font-family:system-ui;font-size:15px">${msg.replace(appUrl, `<a href="${appUrl}">${appUrl}</a>`)}</p>`;
+    try { results.email = await sendEmail({ to: shopEmail, subject: `Quote approved: ${customerName} — ${vehicle}`, html }); }
+    catch (e) { console.error("[notify] shop email error:", e.message); results.shopEmailError = e.message; }
+  }
+
+  return results;
+}
+
+export async function sendInvoiceNotification({ customerEmail, customerPhone, customerName, vehicle, invoiceTotal, trackUrl }) {
+  const body = `RepairScout invoice for ${vehicle}: $${Number(invoiceTotal).toFixed(2)}. View here: ${trackUrl}`;
+  const results = {};
+
+  if (customerEmail) {
+    const html = `<div style="font-family:system-ui;max-width:520px;margin:0 auto">
+      <h2 style="color:#1e3a5f">RepairScout Invoice</h2>
+      <p>Hi ${customerName},</p>
+      <p>Your repair invoice for <strong>${vehicle}</strong> is ready.</p>
+      <p style="font-size:24px;font-weight:700;color:#f97316">Total: $${Number(invoiceTotal).toFixed(2)}</p>
+      <a href="${trackUrl}" style="display:inline-block;background:#1e3a5f;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700">View Invoice & Pay</a>
+    </div>`;
+    try { results.email = await sendEmail({ to: customerEmail, subject: `Invoice ready: ${vehicle} — $${Number(invoiceTotal).toFixed(2)}`, html }); }
+    catch (e) { results.emailError = e.message; }
+  }
+
+  if (customerPhone) {
+    const normalized = customerPhone.replace(/\D/g, "");
+    const e164 = normalized.startsWith("1") ? `+${normalized}` : `+1${normalized}`;
+    try { results.sms = await sendSms({ to: e164, body }); }
+    catch (e) { results.smsError = e.message; }
+  }
+
+  return results;
+}
+
 export async function sendQuoteNotification({ quote, customer, quoteId, token, language = "es" }) {
   const trackUrl = `${APP_URL}/track/${token}`;
   const results = {};

@@ -13,6 +13,7 @@ import {
   CircleDollarSign,
   Clock3,
   FileCheck2,
+  FileText,
   Gauge,
   Headphones,
   LayoutDashboard,
@@ -20,8 +21,10 @@ import {
   MapPin,
   Menu,
   MessageSquareText,
+  Package,
   PackageSearch,
   Phone,
+  Receipt,
   Search,
   Send,
   ShieldCheck,
@@ -29,6 +32,7 @@ import {
   Star,
   Store,
   Trash2,
+  Truck,
   UserRound,
   Users,
   Copy,
@@ -71,6 +75,8 @@ import {
   getAdminUsers,
   setAdminUserRole,
   getAdminQuotes,
+  setTrackingInfo,
+  sendInvoice,
 } from "./api";
 import { T, confidenceDisplay, safetyLevelDisplay, statusDisplay, quoteStatusKeys } from "./i18n";
 
@@ -307,56 +313,454 @@ function AppointmentsPanel({ onBook }) {
   );
 }
 
-function WorkOrdersPanel() {
+function InvoiceModal({ order, lang, onClose, onSent }) {
+  const isEn = lang === "en";
+  const displayQ = order?.quoteSingle || order?.quoteCombo;
+  const veh = order?.vehicle || {};
+  const vehicleStr = [veh.year, veh.make, veh.model].filter(Boolean).join(" ") || "—";
+
+  const [upchargePct, setUpchargePct] = useState(order?.partsUpchargePct ?? 20);
+  const [paymentType, setPaymentType] = useState("full");
+  const [depositPct, setDepositPct] = useState(50);
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState("");
+
+  const partsOriginal = displayQ?.partsCost || 0;
+  const partsWithUpcharge = partsOriginal * (1 + upchargePct / 100);
+  const upchargeAmount = partsWithUpcharge - partsOriginal;
+  const laborMid = ((displayQ?.laborLow || 0) + (displayQ?.laborHigh || 0)) / 2;
+  const invoiceTotal = partsWithUpcharge + laborMid;
+  const amountDue = paymentType === "deposit" ? invoiceTotal * (depositPct / 100) : invoiceTotal;
+
+  const doSend = async () => {
+    setSending(true); setError("");
+    try {
+      await sendInvoice(order.id, { paymentType, depositPct, invoiceTotal });
+      setSent(true);
+      onSent?.();
+    } catch (e) { setError(e.message); }
+    finally { setSending(false); }
+  };
+
+  const OVERLAY = { position: "fixed", inset: 0, background: "#000b", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 };
+  const CARD = { background: "#0d1829", border: "1px solid #1e2d47", borderRadius: 14, width: "100%", maxWidth: 540, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px #0009" };
+  const ROW = { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: "1px solid #0e1a2e", fontSize: 12 };
+
+  return (
+    <div style={OVERLAY} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={CARD}>
+        <div style={{ padding: "18px 22px", borderBottom: "1px solid #1e2d47", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Receipt size={18} color="#f97316" />
+            <span style={{ fontWeight: 700, fontSize: 15, color: "#f1f5f9" }}>{isEn ? "Invoice" : "Factura"}</span>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: 20, lineHeight: 1 }}>×</button>
+        </div>
+
+        <div style={{ padding: "18px 22px" }}>
+          {/* Customer + Vehicle */}
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>{isEn ? "Customer" : "Cliente"}</div>
+            <div style={{ fontWeight: 700, color: "#f1f5f9", fontSize: 14 }}>{order.customerName}</div>
+            <div style={{ fontSize: 12, color: "#94a3b8" }}>{vehicleStr}</div>
+            {order.customerEmail && <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>{order.customerEmail}</div>}
+          </div>
+
+          {/* Parts upcharge slider */}
+          <div style={{ background: "#060f1a", border: "1px solid #1e2d47", borderRadius: 10, padding: "14px 16px", marginBottom: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0" }}>{isEn ? "Parts Sourcing Fee" : "Cargo por abastecimiento"}</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: "#f97316" }}>{upchargePct}%</span>
+            </div>
+            <input type="range" min="10" max="40" step="5" value={upchargePct} onChange={(e) => setUpchargePct(Number(e.target.value))}
+              style={{ width: "100%", accentColor: "#f97316", cursor: "pointer" }} />
+            <p style={{ fontSize: 10, color: "#475569", margin: "8px 0 0" }}>
+              {isEn
+                ? `Parts are sourced, ordered, and guaranteed by the shop. A ${upchargePct}% handling & warranty fee applies.`
+                : `Las piezas son abastecidas, pedidas y garantizadas por el taller. Se aplica un cargo del ${upchargePct}% por manejo y garantía.`}
+            </p>
+          </div>
+
+          {/* Line items */}
+          <div style={{ background: "#060f1a", border: "1px solid #1e2d47", borderRadius: 8, overflow: "hidden", marginBottom: 16 }}>
+            <div style={{ padding: "8px 14px", background: "#0a1828", fontSize: 10, color: "#475569", fontWeight: 600, letterSpacing: ".06em", display: "flex", justifyContent: "space-between" }}>
+              <span>{isEn ? "ITEM" : "CONCEPTO"}</span><span>{isEn ? "AMOUNT" : "MONTO"}</span>
+            </div>
+            {(displayQ?.lineItems || []).map((item) => (
+              <div key={item.partKey} style={ROW}>
+                <span style={{ color: "#94a3b8", paddingLeft: 14 }}>{isEn ? item.nameEn : item.nameEs} × {item.qty}</span>
+                <span style={{ color: "#f1f5f9", paddingRight: 14 }}>{fmt(item.totalPrice)}</span>
+              </div>
+            ))}
+            <div style={{ ...ROW, paddingLeft: 14, paddingRight: 14 }}>
+              <span style={{ color: "#64748b" }}>{isEn ? "Parts subtotal" : "Subtotal piezas"}</span>
+              <span style={{ color: "#94a3b8" }}>{fmt(partsOriginal)}</span>
+            </div>
+            <div style={{ ...ROW, paddingLeft: 14, paddingRight: 14 }}>
+              <span style={{ color: "#f97316" }}>{isEn ? `Sourcing fee (${upchargePct}%)` : `Cargo de abastecimiento (${upchargePct}%)`}</span>
+              <span style={{ color: "#f97316" }}>+{fmt(upchargeAmount)}</span>
+            </div>
+            <div style={{ ...ROW, paddingLeft: 14, paddingRight: 14 }}>
+              <span style={{ color: "#64748b" }}>{isEn ? "Parts total (with fee)" : "Total piezas (con cargo)"}</span>
+              <span style={{ color: "#f1f5f9", fontWeight: 600 }}>{fmt(partsWithUpcharge)}</span>
+            </div>
+            <div style={{ ...ROW, paddingLeft: 14, paddingRight: 14 }}>
+              <span style={{ color: "#64748b" }}>{isEn ? "Labor (avg. estimate)" : "Mano de obra (promedio)"}</span>
+              <span style={{ color: "#f1f5f9" }}>{fmt(laborMid)}</span>
+            </div>
+            <div style={{ padding: "10px 14px", display: "flex", justifyContent: "space-between", fontSize: 14, fontWeight: 700 }}>
+              <span style={{ color: "#f1f5f9" }}>{isEn ? "Invoice Total" : "Total de factura"}</span>
+              <span style={{ color: "#4ade80" }}>{fmt(invoiceTotal)}</span>
+            </div>
+          </div>
+
+          {/* Payment type */}
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ fontSize: 11, color: "#64748b", fontWeight: 600, letterSpacing: ".06em", marginBottom: 8 }}>
+              {isEn ? "PAYMENT REQUEST" : "TIPO DE PAGO"}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {["full", "deposit"].map((pt) => (
+                <button key={pt} onClick={() => setPaymentType(pt)} style={{
+                  flex: 1, padding: "9px 0", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+                  border: paymentType === pt ? "1.5px solid #f97316" : "1px solid #1e2d47",
+                  background: paymentType === pt ? "rgba(249,115,22,.12)" : "transparent",
+                  color: paymentType === pt ? "#f97316" : "#64748b",
+                }}>
+                  {pt === "full" ? (isEn ? "Full Payment" : "Pago completo") : (isEn ? "Deposit" : "Depósito")}
+                </button>
+              ))}
+            </div>
+            {paymentType === "deposit" && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 4 }}>
+                  <span style={{ color: "#64748b" }}>{isEn ? "Deposit %" : "% de depósito"}</span>
+                  <span style={{ color: "#f97316", fontWeight: 700 }}>{depositPct}% = {fmt(amountDue)}</span>
+                </div>
+                <input type="range" min="25" max="75" step="25" value={depositPct} onChange={(e) => setDepositPct(Number(e.target.value))}
+                  style={{ width: "100%", accentColor: "#f97316" }} />
+              </div>
+            )}
+          </div>
+
+          {/* Amount due summary */}
+          <div style={{ background: "rgba(74,222,128,.06)", border: "1px solid rgba(74,222,128,.3)", borderRadius: 8, padding: "12px 16px", marginBottom: 18, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: 12, color: "#94a3b8" }}>{isEn ? "Amount due now" : "Monto a pagar ahora"}</span>
+            <span style={{ fontSize: 20, fontWeight: 700, color: "#4ade80" }}>{fmt(amountDue)}</span>
+          </div>
+
+          {error && <p style={{ color: "#f87171", fontSize: 12, marginBottom: 12 }}>{error}</p>}
+
+          {sent ? (
+            <div style={{ textAlign: "center", padding: "12px 0", color: "#4ade80", fontWeight: 700 }}>
+              <Check size={18} style={{ verticalAlign: "middle", marginRight: 6 }} />
+              {isEn ? "Invoice sent to customer!" : "¡Factura enviada al cliente!"}
+            </div>
+          ) : (
+            <button className="primary" style={{ width: "100%" }} onClick={doSend} disabled={sending}>
+              {sending ? (isEn ? "Sending…" : "Enviando…") : (isEn ? "Send Invoice to Customer" : "Enviar factura al cliente")}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function getCarrierTrackUrl(carrier, trackingNum) {
+  if (!trackingNum) return null;
+  const n = encodeURIComponent(trackingNum);
+  switch ((carrier || "").toUpperCase()) {
+    case "UPS":    return `https://www.ups.com/track?tracknum=${n}`;
+    case "FEDEX":  return `https://www.fedex.com/apps/fedextrack/?trknbr=${n}`;
+    case "USPS":   return `https://tools.usps.com/go/TrackConfirmAction?qtc_tLabels1=${n}`;
+    case "AMAZON": return `https://www.amazon.com/gp/your-account/ship-track?orderID=${n}`;
+    default:       return `https://www.google.com/search?q=${encodeURIComponent((carrier || "package") + " tracking " + trackingNum)}`;
+  }
+}
+
+function WorkOrdersPanel({ user }) {
   const t = useT();
   const { lang } = useLang();
   const isEn = lang === "en";
-  const orders = [
-    { id: "WO-041", customer: "Taylor Kim",    vehicle: "Subaru Outback 2020",   service: isEn ? "Oil change & inspection"     : "Cambio de aceite e inspección",    statusKey: "in_progress",   tech: "Carlos M.", est: "$89",    odo: "58,200" },
-    { id: "WO-040", customer: "Diana Torres",  vehicle: "Ford F-150 2019",       service: isEn ? "Brake pad replacement"       : "Reemplazo de pastillas de freno",  statusKey: "waiting_parts", tech: "Ana V.",    est: "$280",   odo: "94,100" },
-    { id: "WO-039", customer: "Sam Okoro",     vehicle: "Tesla Model 3 2022",    service: isEn ? "Warning light diagnosis"     : "Diagnóstico de advertencia",       statusKey: "pending_approval", tech: "Luis R.", est: "—",     odo: "22,400" },
-    { id: "WO-038", customer: "Marcus Hill",   vehicle: "Chevrolet Malibu 2018", service: isEn ? "Brake diagnosis"             : "Diagnóstico de frenos",            statusKey: "scheduled",     tech: "Ana V.",    est: "$320",   odo: "88,750" },
-    { id: "WO-037", customer: "Ana Cruz",      vehicle: "Honda Civic 2016",      service: isEn ? "A/C repair"                  : "Reparación de A/C",                statusKey: "scheduled",     tech: "Luis R.",   est: "$540",   odo: "71,330" },
-  ];
-  const statusLabel = {
-    in_progress:      isEn ? "In progress"         : "En proceso",
-    waiting_parts:    isEn ? "Waiting on parts"    : "En espera de piezas",
-    pending_approval: isEn ? "Pending approval"    : "Pendiente de aprobación",
-    scheduled:        isEn ? "Scheduled"           : "Programada",
-    completed:        isEn ? "Completed"           : "Completada",
+  const stageLabelMap = STAGE_LABELS[isEn ? "en" : "es"];
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(null);
+  const [updating, setUpdating] = useState("");
+  const [trackingVal, setTrackingVal] = useState("");
+  const [carrierVal, setCarrierVal] = useState("UPS");
+  const [savingTracking, setSavingTracking] = useState(false);
+  const [invoiceOrder, setInvoiceOrder] = useState(null);
+
+  useEffect(() => {
+    if (!user) { setLoading(false); return; }
+    getSentQuotes()
+      .then(({ quotes: q }) => setOrders(q || []))
+      .catch(() => setOrders([]))
+      .finally(() => setLoading(false));
+  }, [user]);
+
+  const refresh = () => {
+    if (!user) return;
+    getSentQuotes().then(({ quotes: q }) => setOrders(q || [])).catch(() => {});
   };
-  const statusColor = {
-    in_progress: "#4ade80", waiting_parts: "#fbbf24", pending_approval: "#f97316",
-    scheduled: "#60a5fa", completed: "#94a3b8",
+
+  const advanceStage = async (quoteId, toStage) => {
+    setUpdating(`${quoteId}:${toStage}`);
+    try {
+      const { quote: updated } = await updateRepairStage(quoteId, toStage);
+      setOrders((os) => os.map((o) => o.id === quoteId ? updated : o));
+      setExpanded((e) => e?.id === quoteId ? updated : e);
+    } catch (e) { console.error(e); }
+    finally { setUpdating(""); }
+  };
+
+  const saveTracking = async (order) => {
+    if (!trackingVal.trim()) return;
+    setSavingTracking(true);
+    try {
+      const { quote: updated } = await setTrackingInfo(order.id, trackingVal.trim(), carrierVal);
+      setOrders((os) => os.map((o) => o.id === order.id ? updated : o));
+      setExpanded(updated);
+      if (["Approved", "Parts Ordered"].includes(order.repairStage)) {
+        await advanceStage(order.id, "Parts In Transit");
+      }
+      setTrackingVal(""); setCarrierVal("UPS");
+    } catch (e) { console.error(e); }
+    finally { setSavingTracking(false); }
+  };
+
+  const stageColor = (stage) => {
+    const idx = REPAIR_STAGES.indexOf(stage);
+    if (idx >= REPAIR_STAGES.indexOf("Paid")) return "#4ade80";
+    if (idx >= REPAIR_STAGES.indexOf("Completed")) return "#4ade80";
+    if (idx >= REPAIR_STAGES.indexOf("In Progress")) return "#38bdf8";
+    if (idx >= REPAIR_STAGES.indexOf("Parts In Transit")) return "#a78bfa";
+    if (stage === "Approved") return "#fbbf24";
+    return "#f97316";
+  };
+
+  const DEMO = [
+    { id: "demo-1", customerName: "Taylor Kim",   vehicle: { year: "2020", make: "Subaru", model: "Outback" },   repairStage: "In Progress",   quoteCombo: { totalLow: 310, totalHigh: 380, partsCost: 140, laborLow: 170, laborHigh: 240, lineItems: [] } },
+    { id: "demo-2", customerName: "Diana Torres", vehicle: { year: "2019", make: "Ford",   model: "F-150" },     repairStage: "Parts Arrived", quoteCombo: { totalLow: 280, totalHigh: 340, partsCost: 120, laborLow: 160, laborHigh: 220, lineItems: [] }, trackingNumber: "1Z999AA101234", trackingCarrier: "UPS" },
+    { id: "demo-3", customerName: "Sam Okoro",    vehicle: { year: "2022", make: "Tesla",  model: "Model 3" },   repairStage: "Approved",      quoteCombo: { totalLow: 200, totalHigh: 260, partsCost: 80,  laborLow: 120, laborHigh: 180, lineItems: [] } },
+  ];
+  const displayed = orders.length > 0 ? orders.filter((o) => o.repairStage !== "Quote Sent") : (!user ? DEMO : []);
+
+  const INPUT = {
+    background: "#060f1a", border: "1px solid #1e2d47", color: "#e2e8f0",
+    padding: "8px 12px", borderRadius: 6, fontSize: 12, fontFamily: "inherit", outline: "none",
   };
 
   return (
     <section className="panel">
       <div className="panel-title">
-        <div><h2>{t("workOrdersTitle")}</h2><p>{orders.length} {isEn ? "active" : "activas"}</p></div>
-        <button className="primary small">+ {t("newOrderBtn")}</button>
+        <div>
+          <h2>{t("workOrdersTitle")}</h2>
+          <p>{displayed.length} {isEn ? "active orders" : "órdenes activas"}</p>
+        </div>
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
-        {orders.map((o) => (
-          <article key={o.id} className="card" style={{
-            padding: "14px 18px", display: "grid", gridTemplateColumns: "64px 1fr auto",
-            gap: 16, alignItems: "center", cursor: "pointer", border: "1px solid #151c2a", transition: "border .2s",
-          }}>
-            <span style={{ fontSize: 10, color: "#475569", fontFamily: "monospace", fontWeight: 600 }}>{o.id}</span>
-            <div>
-              <div style={{ fontWeight: 600, fontSize: 13, color: "#f1f5f9", marginBottom: 3 }}>{o.service}</div>
-              <div style={{ fontSize: 11, color: "#64748b" }}>{o.customer} · {o.vehicle} · {o.odo} mi · {o.tech}</div>
-            </div>
-            <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: 13, color: "#f1f5f9", fontWeight: 600, marginBottom: 5 }}>{o.est}</div>
-              <span style={{
-                fontSize: 9, padding: "3px 8px", borderRadius: 20,
-                border: `1px solid ${statusColor[o.statusKey]}44`, color: statusColor[o.statusKey], background: `${statusColor[o.statusKey]}11`,
-              }}>{statusLabel[o.statusKey]}</span>
-            </div>
+
+      {loading && <p style={{ color: "#475569", fontSize: 12, padding: "32px 0", textAlign: "center" }}>{isEn ? "Loading…" : "Cargando…"}</p>}
+
+      {!loading && displayed.length === 0 && (
+        <div style={{ textAlign: "center", padding: "48px 0", color: "#334155" }}>
+          <Wrench size={32} style={{ opacity: .3, marginBottom: 12 }} />
+          <div style={{ fontSize: 13 }}>{isEn ? "No active work orders" : "Sin órdenes de trabajo activas"}</div>
+          <div style={{ fontSize: 11, marginTop: 4, color: "#1e2d47" }}>
+            {isEn ? "Work orders appear here when a customer approves a quote." : "Las órdenes aparecen cuando un cliente aprueba una cotización."}
+          </div>
+        </div>
+      )}
+
+      {displayed.map((o) => {
+        const isOpen = expanded?.id === o.id;
+        const veh = o.vehicle || {};
+        const vehicleStr = [veh.year, veh.make, veh.model].filter(Boolean).join(" ") || "—";
+        const displayQ = o.quoteSingle || o.quoteCombo;
+        const stageIdx = REPAIR_STAGES.indexOf(o.repairStage);
+        const nextStage = stageIdx >= 0 && stageIdx < REPAIR_STAGES.length - 1 ? REPAIR_STAGES[stageIdx + 1] : null;
+        const color = stageColor(o.repairStage);
+        const canAddTracking = ["Approved", "Parts Ordered"].includes(o.repairStage) && !o.trackingNumber;
+        const canGenInvoice = REPAIR_STAGES.indexOf(o.repairStage) >= REPAIR_STAGES.indexOf("Parts Arrived");
+
+        return (
+          <article key={o.id} style={{ border: "1px solid #1e2d47", borderRadius: 10, marginBottom: 12, background: "#0c1524", overflow: "hidden" }}>
+            <button onClick={() => setExpanded(isOpen ? null : o)} style={{
+              width: "100%", background: "transparent", border: "none", cursor: "pointer",
+              display: "flex", alignItems: "center", gap: 14, padding: "14px 18px", textAlign: "left",
+            }}>
+              <span className="request-avatar">
+                {(o.customerName || "?").split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase()}
+              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: 13, color: "#f1f5f9" }}>{o.customerName}</div>
+                <div style={{ fontSize: 11, color: "#64748b" }}>{vehicleStr}</div>
+                {o.trackingNumber && (
+                  <div style={{ fontSize: 10, color: "#a78bfa", marginTop: 2 }}>
+                    <Package size={10} style={{ verticalAlign: "middle", marginRight: 3 }} />
+                    {o.trackingCarrier} {o.trackingNumber}
+                  </div>
+                )}
+              </div>
+              <div style={{ textAlign: "right", flexShrink: 0 }}>
+                <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 20, border: `1px solid ${color}44`, background: `${color}11`, color }}>
+                  {stageLabelMap[o.repairStage] || o.repairStage}
+                </span>
+                {displayQ && (
+                  <div style={{ fontSize: 12, color: "#f97316", fontWeight: 700, marginTop: 4 }}>
+                    {fmt(displayQ.totalLow)}–{fmt(displayQ.totalHigh)}
+                  </div>
+                )}
+              </div>
+              <ChevronDown size={15} color="#334155" style={{ transform: isOpen ? "rotate(180deg)" : "", transition: ".2s", flexShrink: 0 }} />
+            </button>
+
+            {isOpen && (
+              <div style={{ padding: "0 18px 18px", borderTop: "1px solid #0e1a2e" }}>
+                {/* Stage timeline */}
+                <div style={{ margin: "16px 0" }}>
+                  <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, letterSpacing: ".07em", marginBottom: 12 }}>
+                    {isEn ? "REPAIR TIMELINE" : "PROGRESO DE REPARACIÓN"}
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+                    {REPAIR_STAGES.map((stage, idx) => {
+                      const done = idx < stageIdx;
+                      const current = idx === stageIdx;
+                      return (
+                        <div key={stage} style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0 }}>
+                            <div style={{
+                              width: 20, height: 20, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+                              background: done ? "#4ade80" : current ? stageColor(stage) : "#0e1a2e",
+                              border: done ? "none" : current ? `2px solid ${stageColor(stage)}` : "1.5px solid #1e2d47",
+                            }}>
+                              {done && <Check size={11} color="#0a1020" />}
+                              {current && <span style={{ fontSize: 7, color: stageColor(stage) }}>●</span>}
+                            </div>
+                            {idx < REPAIR_STAGES.length - 1 && (
+                              <div style={{ width: 1, height: 20, background: done ? "#4ade8066" : "#1e2d4744" }} />
+                            )}
+                          </div>
+                          <div style={{ paddingTop: 2, paddingBottom: 4 }}>
+                            <span style={{
+                              fontSize: 12, fontWeight: current ? 700 : done ? 500 : 400,
+                              color: done ? "#4ade80" : current ? stageColor(stage) : "#334155",
+                            }}>
+                              {stageLabelMap[stage] || stage}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Advance stage */}
+                {nextStage && !["Invoice Sent", "Paid"].includes(o.repairStage) && (
+                  <button
+                    className="primary small"
+                    style={{ marginBottom: 14, fontSize: 11 }}
+                    onClick={() => advanceStage(o.id, nextStage)}
+                    disabled={!!updating}
+                  >
+                    {updating === `${o.id}:${nextStage}` ? "…" : (isEn ? `Mark as: ${stageLabelMap[nextStage]}` : `Marcar como: ${stageLabelMap[nextStage]}`)}
+                  </button>
+                )}
+
+                {/* Tracking number input */}
+                {canAddTracking && (
+                  <div style={{ background: "#060f1a", border: "1px solid #1e2d47", borderRadius: 8, padding: "12px 14px", marginBottom: 14 }}>
+                    <div style={{ fontSize: 11, color: "#a78bfa", fontWeight: 600, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                      <Truck size={13} />{isEn ? "Add Tracking Number (online order)" : "Agregar número de rastreo (pedido en línea)"}
+                    </div>
+                    <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+                      <select value={carrierVal} onChange={(e) => setCarrierVal(e.target.value)}
+                        style={{ ...INPUT, width: 90, flexShrink: 0 }}>
+                        {["UPS", "FedEx", "USPS", "Amazon"].map((c) => <option key={c}>{c}</option>)}
+                      </select>
+                      <input value={trackingVal} onChange={(e) => setTrackingVal(e.target.value)}
+                        placeholder={isEn ? "Tracking number…" : "Número de rastreo…"}
+                        style={{ ...INPUT, flex: 1 }} />
+                    </div>
+                    <button className="outline" style={{ fontSize: 11, width: "100%" }}
+                      onClick={() => saveTracking(o)} disabled={savingTracking || !trackingVal.trim()}>
+                      {savingTracking ? "…" : (isEn ? "Save & Mark In Transit" : "Guardar y marcar en tránsito")}
+                    </button>
+                  </div>
+                )}
+
+                {/* Existing tracking display */}
+                {o.trackingNumber && (
+                  <div style={{ background: "#060f1a", border: "1px solid #a78bfa44", borderRadius: 8, padding: "10px 14px", marginBottom: 14 }}>
+                    <div style={{ fontSize: 11, color: "#a78bfa", fontWeight: 600, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+                      <Package size={13} />{o.trackingCarrier} Tracking
+                    </div>
+                    <div style={{ fontSize: 12, color: "#e2e8f0", fontFamily: "monospace", marginBottom: 8 }}>{o.trackingNumber}</div>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button className="outline" style={{ fontSize: 11, flex: 1 }}
+                        onClick={() => window.open(getCarrierTrackUrl(o.trackingCarrier, o.trackingNumber), "_blank")}>
+                        {isEn ? "Track Package" : "Rastrear paquete"}
+                      </button>
+                      {o.repairStage === "Parts In Transit" && (
+                        <button className="primary small" style={{ fontSize: 11, flex: 1 }}
+                          onClick={() => advanceStage(o.id, "Parts Arrived")}>
+                          {updating ? "…" : (isEn ? "Mark Arrived" : "Llegó")}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Invoice button */}
+                {canGenInvoice && o.repairStage !== "Paid" && (
+                  <button
+                    onClick={() => setInvoiceOrder(o)}
+                    style={{
+                      width: "100%", padding: "10px 0", borderRadius: 8, border: "1px solid #4ade8044",
+                      background: "rgba(74,222,128,.06)", color: "#4ade80", fontWeight: 700, fontSize: 12,
+                      cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
+                    }}
+                  >
+                    <FileText size={14} />{o.invoiceSentAt ? (isEn ? "Resend Invoice" : "Reenviar factura") : (isEn ? "Generate & Send Invoice" : "Generar y enviar factura")}
+                  </button>
+                )}
+
+                {o.repairStage === "Paid" && (
+                  <div style={{ textAlign: "center", padding: "10px 0", color: "#4ade80", fontWeight: 700, fontSize: 13 }}>
+                    <Check size={16} style={{ verticalAlign: "middle", marginRight: 6 }} />
+                    {isEn ? "Payment received" : "Pago recibido"}
+                    {o.paymentAmount && <span style={{ color: "#94a3b8", fontWeight: 400, marginLeft: 6 }}>{fmt(o.paymentAmount)}</span>}
+                  </div>
+                )}
+
+                {/* Track link */}
+                <div style={{ marginTop: 10, display: "flex", gap: 6 }}>
+                  <button className="outline" style={{ fontSize: 11, flex: 1 }}
+                    onClick={() => navigator.clipboard?.writeText(`${window.location.origin}/track/${o.token}`)}>
+                    {isEn ? "Copy Track Link" : "Copiar enlace"}
+                  </button>
+                  <button className="outline" style={{ fontSize: 11, flex: 1 }}
+                    onClick={() => window.open(`/track/${o.token}`, "_blank")}>
+                    {isEn ? "View as Customer" : "Ver como cliente"}
+                  </button>
+                </div>
+              </div>
+            )}
           </article>
-        ))}
-      </div>
+        );
+      })}
+
+      {invoiceOrder && (
+        <InvoiceModal
+          order={invoiceOrder}
+          lang={lang}
+          onClose={() => setInvoiceOrder(null)}
+          onSent={() => { setInvoiceOrder(null); refresh(); }}
+        />
+      )}
     </section>
   );
 }
@@ -1385,27 +1789,42 @@ const REPAIR_STAGES = [
   "Quote Sent",
   "Approved",
   "Parts Ordered",
+  "Parts In Transit",
+  "Parts Arrived",
   "In Progress",
+  "Quality Check",
   "Ready for Pickup",
   "Completed",
+  "Invoice Sent",
+  "Paid",
 ];
 
 const STAGE_LABELS = {
   es: {
-    "Quote Sent":       "Cotización enviada",
-    "Approved":         "Aprobada",
-    "Parts Ordered":    "Piezas pedidas",
-    "In Progress":      "En proceso",
-    "Ready for Pickup": "Lista para recoger",
-    "Completed":        "Completada",
+    "Quote Sent":        "Cotización enviada",
+    "Approved":          "Aprobada",
+    "Parts Ordered":     "Piezas pedidas",
+    "Parts In Transit":  "Piezas en tránsito",
+    "Parts Arrived":     "Piezas llegaron",
+    "In Progress":       "En proceso",
+    "Quality Check":     "Control de calidad",
+    "Ready for Pickup":  "Lista para recoger",
+    "Completed":         "Completada",
+    "Invoice Sent":      "Factura enviada",
+    "Paid":              "Pagada",
   },
   en: {
-    "Quote Sent":       "Quote Sent",
-    "Approved":         "Approved",
-    "Parts Ordered":    "Parts Ordered",
-    "In Progress":      "In Progress",
-    "Ready for Pickup": "Ready for Pickup",
-    "Completed":        "Completed",
+    "Quote Sent":        "Quote Sent",
+    "Approved":          "Approved",
+    "Parts Ordered":     "Parts Ordered",
+    "Parts In Transit":  "Parts In Transit",
+    "Parts Arrived":     "Parts Arrived",
+    "In Progress":       "In Progress",
+    "Quality Check":     "Quality Check",
+    "Ready for Pickup":  "Ready for Pickup",
+    "Completed":         "Completed",
+    "Invoice Sent":      "Invoice Sent",
+    "Paid":              "Paid",
   },
 };
 
@@ -2964,7 +3383,8 @@ function tabKeyFromLabel(label, lang) {
 function ShopPortal({ user, onRequireAuth }) {
   const { lang } = useLang();
   const t = useT();
-  const demoQR = lang === "en" ? quoteRequestsEn : quoteRequests;
+  const isEn = lang === "en";
+  const demoQR = isEn ? quoteRequestsEn : quoteRequests;
   const [activeKey, setActiveKey] = useState("tabResumen");
   const active = tabLabel(activeKey, lang);
   const setActive = (label) => setActiveKey(tabKeyFromLabel(label, lang));
@@ -2989,15 +3409,20 @@ function ShopPortal({ user, onRequireAuth }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [notifOpen, setNotifOpen] = useState(false);
+  const [approvedQuotes, setApprovedQuotes] = useState([]);
 
   useEffect(() => {
     let cancelled = false;
-    Promise.allSettled([getQuoteRequests(), getShopProfile(), getSystemHealth()])
-      .then(([rr, pr, hr]) => {
+    Promise.allSettled([getQuoteRequests(), getShopProfile(), getSystemHealth(), getSentQuotes()])
+      .then(([rr, pr, hr, sq]) => {
         if (cancelled) return;
         if (rr.status === "fulfilled") setSavedRequests(rr.value.quoteRequests);
         if (pr.status === "fulfilled") { setShopProfile(pr.value.profile); setProfileForm((c) => ({ ...c, ...pr.value.profile })); }
         if (hr.status === "fulfilled") setHealth(hr.value);
+        if (sq.status === "fulfilled") {
+          const newlyApproved = (sq.value.quotes || []).filter((q) => q.customerApproved && q.repairStage === "Approved");
+          setApprovedQuotes(newlyApproved);
+        }
       })
       .catch(() => { if (!cancelled) setSavedRequests([]); });
     return () => { cancelled = true; };
@@ -3074,18 +3499,42 @@ function ShopPortal({ user, onRequireAuth }) {
             <div style={{ position: "relative" }}>
               <button className="icon-button" onClick={() => { setNotifOpen((o) => !o); setSearchOpen(false); }}>
                 <Bell size={19} />
-                {savedRequests.filter((r) => r.status === "Pendiente" || r.status === "Pending").length > 0 && (
-                  <i style={{ position: "absolute", top: 4, right: 4, width: 8, height: 8, borderRadius: "50%", background: "#ef4444", border: "2px solid #fff", display: "block" }} />
+                {(approvedQuotes.length > 0 || savedRequests.filter((r) => r.status === "Solicitud nueva").length > 0) && (
+                  <i style={{ position: "absolute", top: 4, right: 4, width: 8, height: 8, borderRadius: "50%", background: "#ef4444", border: "2px solid #0d1829", display: "block" }} />
                 )}
               </button>
               {notifOpen && (
-                <div style={{ position: "absolute", right: 0, top: "calc(100% + 8px)", width: 300, background: "#0d1829", border: "1px solid #1e2d47", borderRadius: 10, boxShadow: "0 8px 32px #0008", zIndex: 200, overflow: "hidden" }}>
+                <div style={{ position: "absolute", right: 0, top: "calc(100% + 8px)", width: 310, background: "#0d1829", border: "1px solid #1e2d47", borderRadius: 10, boxShadow: "0 8px 32px #0008", zIndex: 200, overflow: "hidden" }}>
                   <div style={{ padding: "12px 14px 8px", borderBottom: "1px solid #1e2d47", fontWeight: 700, fontSize: 12, color: "#e2e8f0", display: "flex", justifyContent: "space-between" }}>
                     {isEn ? "Notifications" : "Notificaciones"}
                     <button onClick={() => setNotifOpen(false)} style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: 16, lineHeight: 1 }}>×</button>
                   </div>
-                  <div style={{ maxHeight: 320, overflowY: "auto" }}>
-                    {visibleRequests.slice(0, 8).map((r) => (
+                  <div style={{ maxHeight: 360, overflowY: "auto" }}>
+                    {/* Approved quotes — action needed */}
+                    {approvedQuotes.map((q) => {
+                      const veh = q.vehicle || {};
+                      const vehicleStr = [veh.year, veh.make, veh.model].filter(Boolean).join(" ");
+                      return (
+                        <button key={q.id} onClick={() => { setActiveKey("tabOrdenes"); setNotifOpen(false); }}
+                          style={{ width: "100%", background: "rgba(74,222,128,.06)", border: "none", borderBottom: "1px solid #4ade8022", padding: "10px 14px", textAlign: "left", cursor: "pointer", display: "flex", gap: 10, alignItems: "center" }}>
+                          <span style={{ width: 32, height: 32, borderRadius: "50%", background: "rgba(74,222,128,.2)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, color: "#4ade80", fontSize: 11, flexShrink: 0 }}>
+                            {(q.customerName || "?").split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase()}
+                          </span>
+                          <span style={{ flex: 1, minWidth: 0 }}>
+                            <span style={{ display: "block", fontWeight: 700, color: "#4ade80", fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                              <Check size={11} style={{ verticalAlign: "middle", marginRight: 3 }} />
+                              {isEn ? "Quote Approved!" : "¡Cotización aprobada!"}
+                            </span>
+                            <span style={{ display: "block", fontSize: 10, color: "#64748b" }}>{q.customerName} · {vehicleStr}</span>
+                          </span>
+                          <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 10, background: "#4ade8022", color: "#4ade80", fontWeight: 700, flexShrink: 0 }}>
+                            {isEn ? "START WO" : "INICIAR"}
+                          </span>
+                        </button>
+                      );
+                    })}
+                    {/* Regular requests */}
+                    {visibleRequests.slice(0, 6).map((r) => (
                       <button key={r.id || r.customer} onClick={() => { setSelectedRequest(r); setNotifOpen(false); }} style={{ width: "100%", background: "none", border: "none", borderBottom: "1px solid #1e2d4744", padding: "10px 14px", textAlign: "left", cursor: "pointer", display: "flex", gap: 10, alignItems: "center" }}>
                         <span style={{ width: 32, height: 32, borderRadius: "50%", background: "#1e3a5f", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, color: "#93c5fd", fontSize: 11, flexShrink: 0 }}>{r.initials}</span>
                         <span style={{ flex: 1, minWidth: 0 }}>
@@ -3095,12 +3544,19 @@ function ShopPortal({ user, onRequireAuth }) {
                         <span style={{ fontSize: 11, fontWeight: 700, color: "#f1f5f9", flexShrink: 0 }}>{r.value || r.estimate}</span>
                       </button>
                     ))}
-                    {visibleRequests.length === 0 && <p style={{ padding: "16px 14px", fontSize: 12, color: "#64748b" }}>{isEn ? "No new notifications" : "Sin notificaciones"}</p>}
+                    {visibleRequests.length === 0 && approvedQuotes.length === 0 && (
+                      <p style={{ padding: "16px 14px", fontSize: 12, color: "#64748b" }}>{isEn ? "No new notifications" : "Sin notificaciones"}</p>
+                    )}
                   </div>
-                  <div style={{ padding: "8px 14px", borderTop: "1px solid #1e2d47" }}>
+                  <div style={{ padding: "8px 14px", borderTop: "1px solid #1e2d47", display: "flex", gap: 8 }}>
                     <button onClick={() => { setActiveKey("tabSolicitudes"); setNotifOpen(false); }} style={{ background: "none", border: "none", color: "#3b82f6", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>
-                      {isEn ? "View all requests →" : "Ver todas las solicitudes →"}
+                      {isEn ? "All requests →" : "Solicitudes →"}
                     </button>
+                    {approvedQuotes.length > 0 && (
+                      <button onClick={() => { setActiveKey("tabOrdenes"); setNotifOpen(false); }} style={{ background: "none", border: "none", color: "#4ade80", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>
+                        {isEn ? "Work orders →" : "Órdenes →"}
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
@@ -3212,7 +3668,7 @@ function ShopPortal({ user, onRequireAuth }) {
             <AppointmentsPanel onBook={() => setBookingOpen(true)} />
           )}
 
-          {active === t("tabOrdenes") && <WorkOrdersPanel />}
+          {active === t("tabOrdenes") && <WorkOrdersPanel user={user} />}
 
           {active === t("tabClientes") && <CustomersPanel requests={visibleRequests} />}
 

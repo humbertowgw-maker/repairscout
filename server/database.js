@@ -430,6 +430,13 @@ function mapIQRow(row) {
     approvedAt: row.approved_at,
     sentAt: row.sent_at,
     createdAt: row.created_at,
+    trackingNumber: row.tracking_number || null,
+    trackingCarrier: row.tracking_carrier || null,
+    partsUpchargePct: row.parts_upcharge_pct != null ? Number(row.parts_upcharge_pct) : 20,
+    invoiceSentAt: row.invoice_sent_at || null,
+    shopNotifiedAt: row.shop_notified_at || null,
+    paymentStatus: row.payment_status || "unpaid",
+    paymentAmount: row.payment_amount != null ? Number(row.payment_amount) : null,
   };
 }
 
@@ -825,6 +832,74 @@ export async function getPartsInquiryById(inquiryId) {
 }
 
 // ── Admin ─────────────────────────────────────────────────────────────────────
+
+export async function workOrderMigrate() {
+  if (!pool) return;
+  await ensureDatabase();
+  await pool.query(`
+    alter table itemized_quotes
+      add column if not exists tracking_number text,
+      add column if not exists tracking_carrier text,
+      add column if not exists parts_upcharge_pct numeric(5,2) default 20,
+      add column if not exists invoice_sent_at timestamptz,
+      add column if not exists shop_notified_at timestamptz,
+      add column if not exists payment_status text default 'unpaid',
+      add column if not exists payment_amount numeric(10,2);
+  `);
+}
+
+export async function getItemizedQuoteById(id) {
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query("select * from itemized_quotes where id = $1 limit 1", [id]);
+    return mapIQRow(result.rows[0]);
+  }
+  const store = await readStore();
+  return (store.itemizedQuotes || []).find((q) => q.id === id) || null;
+}
+
+export async function setTrackingInfo(id, trackingNumber, carrier) {
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query(
+      "update itemized_quotes set tracking_number=$2, tracking_carrier=$3 where id=$1 returning *",
+      [id, trackingNumber || null, carrier || null],
+    );
+    return mapIQRow(result.rows[0]);
+  }
+  let updated = null;
+  await updateStore((store) => ({
+    ...store,
+    itemizedQuotes: (store.itemizedQuotes || []).map((q) => {
+      if (q.id !== id) return q;
+      updated = { ...q, trackingNumber: trackingNumber || null, trackingCarrier: carrier || null };
+      return updated;
+    }),
+  }));
+  return updated;
+}
+
+export async function setInvoiceSent(id, paymentStatus, paymentAmount) {
+  const now = new Date().toISOString();
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query(
+      "update itemized_quotes set invoice_sent_at=$2, repair_stage='Invoice Sent', payment_status=$3, payment_amount=$4 where id=$1 returning *",
+      [id, now, paymentStatus || "unpaid", paymentAmount || null],
+    );
+    return mapIQRow(result.rows[0]);
+  }
+  let updated = null;
+  await updateStore((store) => ({
+    ...store,
+    itemizedQuotes: (store.itemizedQuotes || []).map((q) => {
+      if (q.id !== id) return q;
+      updated = { ...q, invoiceSentAt: now, repairStage: "Invoice Sent", paymentStatus: paymentStatus || "unpaid", paymentAmount: paymentAmount || null };
+      return updated;
+    }),
+  }));
+  return updated;
+}
 
 export async function adminMigrate() {
   if (!pool) return;

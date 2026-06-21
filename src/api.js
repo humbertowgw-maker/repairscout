@@ -173,6 +173,24 @@ export function searchParts(query, lang, zip, state, gasPrice, mpg) {
   return request("/api/parts/search", { method: "POST", body: JSON.stringify({ query, lang, zip, state, gasPrice, mpg }) });
 }
 
+export function getQuoteById(id) {
+  return request(`/api/quotes/${encodeURIComponent(id)}`);
+}
+
+export function setTrackingInfo(id, trackingNumber, carrier) {
+  return request(`/api/quotes/${encodeURIComponent(id)}/tracking`, {
+    method: "PATCH",
+    body: JSON.stringify({ trackingNumber, carrier }),
+  });
+}
+
+export function sendInvoice(id, { paymentType, depositPct, invoiceTotal }) {
+  return request(`/api/quotes/${encodeURIComponent(id)}/invoice`, {
+    method: "POST",
+    body: JSON.stringify({ paymentType, depositPct, invoiceTotal }),
+  });
+}
+
 export function startPartsVerification(payload) {
   return request("/api/parts/verify", { method: "POST", body: JSON.stringify(payload) });
 }

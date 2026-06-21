@@ -8,6 +8,7 @@ import { z } from "zod";
 import { authConfigured, createToken, hashPassword, optionalAuth, requireAuth, verifyPassword } from "./auth.js";
 import {
   adminMigrate,
+  workOrderMigrate,
   approveQuoteByToken,
   completePartsInquiry,
   createItemizedQuote,
@@ -20,6 +21,7 @@ import {
   findUserByEmail,
   getAdminStats,
   getItemizedQuoteByToken,
+  getItemizedQuoteById,
   getPartsInquiryBatch,
   getPartsInquiryById,
   getPendingDiagnosis,
@@ -33,6 +35,8 @@ import {
   markPhoneVerified,
   saveDiagnosis,
   setUserRole,
+  setTrackingInfo,
+  setInvoiceSent,
   setPendingDiagnosisPaid,
   setPendingDiagnosisResult,
   updateBlandCallId,
@@ -43,7 +47,7 @@ import {
 } from "./database.js";
 import { diagnoseVehicle, getDiagnosisProviderStatus } from "./diagnosis.js";
 import { buildQuoteFromDiagnosis } from "./parts.js";
-import { sendQuoteNotification } from "./notify.js";
+import { sendQuoteNotification, sendShopApprovalNotification, sendInvoiceNotification } from "./notify.js";
 import { searchRepairShops } from "./shops.js";
 import { generateOtp, normalizePhone, OTP_TTL_MS, sendOtpSms } from "./otp.js";
 import { constructWebhookEvent, createDiagnosisCheckout } from "./stripe.js";
@@ -503,13 +507,97 @@ app.post("/api/track/:token/approve", async (request, response) => {
   if (!token) return response.status(400).json({ error: "Token inválido." });
   const updated = await approveQuoteByToken(token).catch(() => null);
   if (!updated) return response.status(404).json({ error: "No encontramos esa cotización." });
+
+  // Notify the shop mechanic via SMS + email that the customer approved
+  if (updated.userId) {
+    try {
+      const shopProfile = await getShopProfile(updated.userId);
+      if (shopProfile) {
+        const veh = updated.vehicle || {};
+        const vehicleStr = [veh.year, veh.make, veh.model].filter(Boolean).join(" ") || "Vehicle";
+        await sendShopApprovalNotification({
+          shopPhone: shopProfile.phone,
+          shopEmail: shopProfile.email,
+          customerName: updated.customerName,
+          vehicle: vehicleStr,
+          appUrl: process.env.APP_URL || "https://repairscout.app",
+        });
+      }
+    } catch (e) {
+      console.error("[approve] notify shop error:", e.message);
+    }
+  }
+
+  response.json({ quote: updated });
+});
+
+// ── Get single quote by ID (shop only) ───────────────────────────────────
+
+app.get("/api/quotes/:id", requireAuth, async (request, response) => {
+  if (!["shop", "admin"].includes(request.user.role)) {
+    return response.status(403).json({ error: "Acceso no autorizado." });
+  }
+  const quote = await getItemizedQuoteById(request.params.id).catch(() => null);
+  if (!quote) return response.status(404).json({ error: "Cotización no encontrada." });
+  response.json({ quote });
+});
+
+// ── Set tracking number (shop only) ──────────────────────────────────────
+
+app.patch("/api/quotes/:id/tracking", requireAuth, async (request, response) => {
+  if (request.user.role !== "shop") {
+    return response.status(403).json({ error: "Solo el taller puede actualizar el seguimiento." });
+  }
+  const { trackingNumber, carrier } = request.body || {};
+  if (!trackingNumber?.trim()) return response.status(400).json({ error: "Ingresa un número de rastreo." });
+  const updated = await setTrackingInfo(request.params.id, trackingNumber.trim(), (carrier || "").trim());
+  if (!updated) return response.status(404).json({ error: "Cotización no encontrada." });
+  response.json({ quote: updated });
+});
+
+// ── Send invoice (shop only) ──────────────────────────────────────────────
+
+app.post("/api/quotes/:id/invoice", requireAuth, async (request, response) => {
+  if (request.user.role !== "shop") {
+    return response.status(403).json({ error: "Solo el taller puede enviar facturas." });
+  }
+  const { paymentType, depositPct, invoiceTotal } = request.body || {};
+  const paymentAmount = paymentType === "deposit"
+    ? (invoiceTotal * (depositPct || 50) / 100)
+    : invoiceTotal;
+
+  const updated = await setInvoiceSent(request.params.id, "invoiced", paymentAmount || null);
+  if (!updated) return response.status(404).json({ error: "Cotización no encontrada." });
+
+  // Notify customer via SMS/email about the invoice
+  const veh = updated.vehicle || {};
+  const vehicleStr = [veh.year, veh.make, veh.model].filter(Boolean).join(" ") || "Vehicle";
+  if (updated.customerEmail || updated.customerPhone) {
+    try {
+      await sendInvoiceNotification({
+        customerEmail: updated.customerEmail,
+        customerPhone: updated.customerPhone,
+        customerName: updated.customerName,
+        vehicle: vehicleStr,
+        invoiceTotal: paymentAmount || invoiceTotal || 0,
+        trackUrl: `${process.env.APP_URL || "https://repairscout.app"}/track/${updated.token}`,
+      });
+    } catch (e) {
+      console.error("[invoice] notify customer error:", e.message);
+    }
+  }
+
   response.json({ quote: updated });
 });
 
 // ── Repair stage update (shop only) ───────────────────────────────────────
 
 const repairStageInput = z.object({
-  stage: z.enum(["Quote Sent", "Approved", "Parts Ordered", "In Progress", "Ready for Pickup", "Completed"]),
+  stage: z.enum([
+    "Quote Sent", "Approved", "Parts Ordered", "Parts In Transit",
+    "Parts Arrived", "In Progress", "Quality Check",
+    "Ready for Pickup", "Completed", "Invoice Sent", "Paid",
+  ]),
 });
 
 app.patch("/api/quotes/:id/repair-stage", requireAuth, async (request, response) => {
@@ -521,6 +609,28 @@ app.patch("/api/quotes/:id/repair-stage", requireAuth, async (request, response)
   const updated = await updateRepairStage({ id: request.params.id, stage: parsed.data.stage });
   if (!updated) return response.status(404).json({ error: "No encontramos esa cotización." });
   response.json({ quote: updated });
+});
+
+// ── Cron: check tracking status 3x/day ───────────────────────────────────
+// Called by Vercel Cron at 8am, 12pm, 4pm UTC. Updates "Parts In Transit"
+// orders to "Parts Arrived" when the tracking carrier confirms delivery.
+
+app.get("/api/cron/check-tracking", async (request, response) => {
+  const authHeader = request.headers["authorization"] || "";
+  if (authHeader !== `Bearer ${process.env.CRON_SECRET || "rs-cron"}`) {
+    return response.status(401).json({ error: "Unauthorized." });
+  }
+  // Fetch all In Transit work orders
+  const allQuotes = await listSentQuotes(null).catch(() => []);
+  const inTransit = allQuotes.filter((q) => q.repairStage === "Parts In Transit" && q.trackingNumber);
+  const results = [];
+  for (const q of inTransit) {
+    // Placeholder: in a real implementation, query a tracking API here
+    // e.g. 17track, AfterShip, or the carrier API
+    console.log(`[cron/tracking] Checking ${q.trackingCarrier} ${q.trackingNumber} for order ${q.id}`);
+    results.push({ id: q.id, tracking: q.trackingNumber, status: "checked" });
+  }
+  response.json({ checked: results.length, results });
 });
 
 // ── OTP: send code ────────────────────────────────────────────────────────────
@@ -1006,8 +1116,9 @@ function requireAdmin(request, response, next) {
   next();
 }
 
-// Run on startup: widen role constraint + promote admin email
+// Run on startup: widen role constraint + promote admin email + work order columns
 adminMigrate().catch((err) => console.error("[admin migrate]", err.message));
+workOrderMigrate().catch((err) => console.error("[work order migrate]", err.message));
 
 app.get("/api/admin/stats", requireAuth, requireAdmin, async (_req, res) => {
   try {

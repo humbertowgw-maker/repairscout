@@ -418,12 +418,16 @@ function CustomersPanel({ requests }) {
   );
 }
 
+const INPUT_STYLE = { background: "#0a1020", border: "1px solid #1e2d47", color: "#e2e8f0", padding: "10px 14px", borderRadius: 6, fontSize: 12, fontFamily: "inherit", outline: "none" };
+
 function PartsSearchPanel() {
   const { lang } = useLang();
   const isEn = lang === "en";
   const allParts = isEn ? partsResultsEn : partsResults;
 
   const [query, setQuery] = useState("");
+  const [zip, setZip] = useState("");
+  const [state, setState] = useState("");
   const [results, setResults] = useState(allParts);
   const [onlineResults, setOnlineResults] = useState([]);
   const [searching, setSearching] = useState(false);
@@ -440,7 +444,7 @@ function PartsSearchPanel() {
     setSearching(true);
     setSearchError(null);
     try {
-      const { results: found, online } = await searchParts(query.trim(), lang);
+      const { results: found, online } = await searchParts(query.trim(), lang, zip.trim() || undefined, state.trim() || undefined);
       setResults(found && found.length ? found : allParts);
       setOnlineResults(online || []);
       setHasSearched(true);
@@ -459,16 +463,27 @@ function PartsSearchPanel() {
           <p>{isEn ? "Local stores + online retailers" : "Tiendas locales + tiendas en línea"}</p>
         </div>
       </div>
-      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+      <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
         <input
           placeholder={isEn ? "e.g. exhaust pipe 1991 GMC Sonoma..." : "Ej: tubo de escape 1991 GMC Sonoma..."}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && search()}
-          style={{
-            flex: 1, background: "#0a1020", border: "1px solid #1e2d47", color: "#e2e8f0",
-            padding: "10px 14px", borderRadius: 6, fontSize: 12, fontFamily: "inherit", outline: "none",
-          }}
+          style={{ ...INPUT_STYLE, flex: 2, minWidth: 200 }}
+        />
+        <input
+          placeholder={isEn ? "ZIP code" : "Código postal"}
+          value={zip}
+          onChange={(e) => setZip(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && search()}
+          style={{ ...INPUT_STYLE, width: 90 }}
+        />
+        <input
+          placeholder={isEn ? "State (e.g. CA)" : "Estado (ej. CA)"}
+          value={state}
+          onChange={(e) => setState(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && search()}
+          style={{ ...INPUT_STYLE, width: 100 }}
         />
         <button className="primary" onClick={search} disabled={searching} style={{ display: "flex", alignItems: "center", gap: 6 }}>
           {searching ? (isEn ? "Searching..." : "Buscando...") : <><Search size={15} />{isEn ? "Search" : "Buscar"}</>}
@@ -493,7 +508,12 @@ function PartsSearchPanel() {
           <div className="part-row" key={`${p.seller}-${i}`}>
             <div className="seller-cell">
               <span className="seller-icon"><Store size={20} /></span>
-              <span><strong>{p.seller}</strong><small>{p.part}</small><i>{p.badge}</i></span>
+              <span>
+                <strong>{p.seller}</strong>
+                <small>{p.part}</small>
+                {p.partNumber && <small style={{ color: "#93c5fd", fontSize: 9 }}>#{p.partNumber}</small>}
+                <i>{p.badge}</i>
+              </span>
             </div>
             <div><strong>{p.availability || (isEn ? "Same day" : "Mismo día")}</strong><small>{p.distance}</small></div>
             <div><strong>{p.warranty || "—"}</strong><small>{isEn ? "See terms" : "Ver términos"}</small></div>

@@ -759,13 +759,14 @@ async function callAI(systemPrompt, userPrompt) {
 }
 
 app.post("/api/parts/search", rateLimit({ key: "parts-search", windowMs: 60 * 1000, max: 20 }), async (request, response) => {
-  const { query, lang } = request.body || {};
+  const { query, lang, zip, state } = request.body || {};
   if (!query || typeof query !== "string" || query.trim().length < 2) {
     return response.status(400).json({ error: "Query required." });
   }
 
   const isEs = lang === "es";
   const q = query.trim();
+  const location = [zip, state].filter(Boolean).join(", ") || "the local area";
 
   const systemPrompt = isEs
     ? `Eres un experto en autopartes. Devuelve SOLO JSON válido con resultados realistas para tiendas locales y en línea.`
@@ -773,36 +774,40 @@ app.post("/api/parts/search", rateLimit({ key: "parts-search", windowMs: 60 * 10
 
   const userPrompt = isEs
     ? `Búsqueda: "${q}"
+Ubicación: ${location}
 
 Devuelve un objeto JSON con DOS arrays:
 
-"local": resultados para AutoZone, O'Reilly Auto Parts, NAPA Auto Parts, Advance Auto Parts, AutoQuest. Cada entrada:
+"local": resultados para AutoZone, O'Reilly Auto Parts, NAPA Auto Parts, Advance Auto Parts, AutoQuest cerca de ${location}. Cada entrada:
 - part: nombre exacto de la pieza
 - seller: nombre de la tienda
 - price: precio como "$XX.XX"
 - stock: unidades en inventario (0 si no tienen)
-- phone: teléfono de la tienda (usa números ficticios realistas)
+- phone: teléfono realista de la tienda con código de área de ${location}
 - warranty: garantía típica como "Lifetime", "1 Year", "90 Days"
+- partNumber: número de parte del fabricante (ej. "Walker 52454" o "AC Delco 18A81")
 
 "online": resultados para eBay Motors, Amazon, RockAuto, CarParts.com, PartsGeek. Cada entrada:
 - part: nombre exacto con número de parte si es posible
 - seller: nombre de la tienda
 - price: precio como "$XX.XX"
-- partNumber: número de parte del fabricante (ej. "AC Delco 18A81")
+- partNumber: número de parte del fabricante
 - warranty: garantía típica
 - shipping: tiempo de envío como "2-3 días", "Envío gratis 5-7 días"
 - inStock: true o false`
     : `Search: "${q}"
+Location: ${location}
 
 Return a JSON object with TWO arrays:
 
-"local": results for AutoZone, O'Reilly Auto Parts, NAPA Auto Parts, Advance Auto Parts, AutoQuest. Each entry:
+"local": results for AutoZone, O'Reilly Auto Parts, NAPA Auto Parts, Advance Auto Parts, AutoQuest near ${location}. Each entry:
 - part: exact part name
 - seller: store name
 - price: price as "$XX.XX"
 - stock: estimated units in stock (0 if unlikely to carry)
-- phone: store phone (use realistic fake numbers)
+- phone: realistic store phone number with area code for ${location}
 - warranty: typical warranty like "Lifetime", "1 Year", "90 Days"
+- partNumber: manufacturer part number (e.g. "Walker 52454" or "AC Delco 18A81")
 
 "online": results for eBay Motors, Amazon, RockAuto, CarParts.com, PartsGeek. Each entry:
 - part: exact part name with part number if possible
@@ -832,6 +837,7 @@ Return a JSON object with TWO arrays:
       stock: r.stock ?? null,
       phone: r.phone || null,
       warranty: r.warranty || "—",
+      partNumber: r.partNumber || null,
       url: null,
     }));
 

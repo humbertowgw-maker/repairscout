@@ -116,6 +116,7 @@ export const T = {
     dbLabel: "Base de datos:", dbChecking: "revisando", accountsLabel: "Cuentas:",
     accountsActive: "activas", accountsPending: "pendientes", aiLabel: "IA:", aiFallback: "respaldo local",
     shopStatusLabel: "Taller:", shopClaimed: "reclamado", shopSetup: "configúralo",
+    setupShopName: "Configura tu taller",
     // tabs
     tabResumen: "Resumen", tabSolicitudes: "Solicitudes", tabCitas: "Citas",
     tabOrdenes: "Órdenes de trabajo", tabClientes: "Clientes", tabPiezas: "Búsqueda de piezas",
@@ -238,6 +239,7 @@ export const T = {
     dbLabel: "Database:", dbChecking: "checking", accountsLabel: "Accounts:",
     accountsActive: "active", accountsPending: "pending", aiLabel: "AI:", aiFallback: "local fallback",
     shopStatusLabel: "Shop:", shopClaimed: "claimed", shopSetup: "set it up",
+    setupShopName: "Set up your shop",
     tabResumen: "Overview", tabSolicitudes: "Requests", tabCitas: "Appointments",
     tabOrdenes: "Work orders", tabClientes: "Customers", tabPiezas: "Parts search",
     tabScout: "Scout AI", tabPerfil: "Profile",

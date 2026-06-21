@@ -135,6 +135,8 @@ function TopBar({ portal, setPortal, page, setPage, user, onAuth, onLogout }) {
 }
 
 function AuthModal({ onClose, onAuthenticated }) {
+  const { lang } = useLang();
+  const isEn = lang === "en";
   const [mode, setMode] = useState("register");
   const [form, setForm] = useState({ name: "", email: "", password: "", role: "driver", shopName: "" });
   const [error, setError] = useState("");
@@ -162,34 +164,38 @@ function AuthModal({ onClose, onAuthenticated }) {
     <div className="modal-backdrop centered" onClick={onClose}>
       <form className="auth-modal" onSubmit={submit} onClick={(e) => e.stopPropagation()}>
         <button type="button" className="drawer-close" onClick={onClose}><X /></button>
-        <span className="eyebrow dark"><ShieldCheck size={15} /> Cuenta RepairScout</span>
-        <h2>{mode === "register" ? "Crea tu cuenta" : "Bienvenido de nuevo"}</h2>
-        <p>Guarda vehículos, diagnósticos y solicitudes de cotización.</p>
+        <span className="eyebrow dark"><ShieldCheck size={15} /> RepairScout</span>
+        <h2>{mode === "register" ? (isEn ? "Create your account" : "Crea tu cuenta") : (isEn ? "Welcome back" : "Bienvenido de nuevo")}</h2>
+        <p>{isEn ? "Save vehicles, diagnoses and quote requests." : "Guarda vehículos, diagnósticos y solicitudes de cotización."}</p>
         {mode === "register" && (
           <>
-            <label htmlFor="auth-name">Nombre</label>
+            <label htmlFor="auth-name">{isEn ? "Name" : "Nombre"}</label>
             <input id="auth-name" value={form.name} onChange={(e) => setForm((c) => ({ ...c, name: e.target.value }))} required />
-            <label>Tipo de cuenta</label>
+            <label>{isEn ? "Account type" : "Tipo de cuenta"}</label>
             <div className="role-picker">
-              <button type="button" className={form.role === "driver" ? "active" : ""} onClick={() => setForm((c) => ({ ...c, role: "driver" }))}>Conductor</button>
-              <button type="button" className={form.role === "shop" ? "active" : ""} onClick={() => setForm((c) => ({ ...c, role: "shop" }))}>Taller</button>
+              <button type="button" className={form.role === "driver" ? "active" : ""} onClick={() => setForm((c) => ({ ...c, role: "driver" }))}>{isEn ? "Driver" : "Conductor"}</button>
+              <button type="button" className={form.role === "shop" ? "active" : ""} onClick={() => setForm((c) => ({ ...c, role: "shop" }))}>{isEn ? "Shop" : "Taller"}</button>
             </div>
             {form.role === "shop" && (
               <>
-                <label htmlFor="shop-name">Nombre del taller</label>
+                <label htmlFor="shop-name">{isEn ? "Shop name" : "Nombre del taller"}</label>
                 <input id="shop-name" value={form.shopName} onChange={(e) => setForm((c) => ({ ...c, shopName: e.target.value }))} required />
               </>
             )}
           </>
         )}
-        <label htmlFor="auth-email">Correo electrónico</label>
+        <label htmlFor="auth-email">{isEn ? "Email" : "Correo electrónico"}</label>
         <input id="auth-email" type="email" value={form.email} onChange={(e) => setForm((c) => ({ ...c, email: e.target.value }))} required />
-        <label htmlFor="auth-password">Contraseña</label>
+        <label htmlFor="auth-password">{isEn ? "Password" : "Contraseña"}</label>
         <input id="auth-password" type="password" minLength="8" value={form.password} onChange={(e) => setForm((c) => ({ ...c, password: e.target.value }))} required />
         {error && <p className="form-error">{error}</p>}
-        <button className="primary full" disabled={loading}>{loading ? "Procesando..." : mode === "register" ? "Crear cuenta" : "Iniciar sesión"}</button>
+        <button className="primary full" disabled={loading}>
+          {loading ? (isEn ? "Processing..." : "Procesando...") : mode === "register" ? (isEn ? "Create account" : "Crear cuenta") : (isEn ? "Sign in" : "Iniciar sesión")}
+        </button>
         <button type="button" className="auth-switch" onClick={() => setMode((c) => c === "register" ? "login" : "register")}>
-          {mode === "register" ? "¿Ya tienes cuenta? Inicia sesión" : "¿No tienes cuenta? Regístrate"}
+          {mode === "register"
+            ? (isEn ? "Already have an account? Sign in" : "¿Ya tienes cuenta? Inicia sesión")
+            : (isEn ? "No account? Sign up" : "¿No tienes cuenta? Regístrate")}
         </button>
       </form>
     </div>
@@ -247,23 +253,28 @@ function RequestsFullPanel({ requests, onSelect }) {
 }
 
 function AppointmentsPanel({ onBook }) {
+  const t = useT();
+  const { lang } = useLang();
+  const isEn = lang === "en";
   const apts = [
-    { time: "8:30",  customer: "Taylor Kim",    vehicle: "Subaru Outback 2020",    service: "Cambio de aceite e inspección",  status: "active",     tech: "Carlos M." },
-    { time: "10:00", customer: "Marcus Hill",    vehicle: "Chevrolet Malibu 2018",  service: "Diagnóstico de frenos",          status: "scheduled",  tech: "Ana V." },
-    { time: "11:30", customer: "Ana Cruz",       vehicle: "Honda Civic 2016",       service: "El A/C no enfría",               status: "scheduled",  tech: "Luis R." },
-    { time: "1:00",  customer: null,             vehicle: null,                     service: null,                             status: "open",       tech: null },
-    { time: "2:30",  customer: "Roberto Paz",    vehicle: "Toyota Camry 2021",      service: "Revisión pre-viaje",             status: "scheduled",  tech: "Carlos M." },
-    { time: "4:00",  customer: null,             vehicle: null,                     service: null,                             status: "open",       tech: null },
+    { time: "8:30",  customer: "Taylor Kim",    vehicle: "Subaru Outback 2020",    service: isEn ? "Oil change & inspection" : "Cambio de aceite e inspección",  status: "active",     tech: "Carlos M." },
+    { time: "10:00", customer: "Marcus Hill",    vehicle: "Chevrolet Malibu 2018",  service: isEn ? "Brake diagnosis" : "Diagnóstico de frenos",                  status: "scheduled",  tech: "Ana V." },
+    { time: "11:30", customer: "Ana Cruz",       vehicle: "Honda Civic 2016",       service: isEn ? "A/C not cooling" : "El A/C no enfría",                       status: "scheduled",  tech: "Luis R." },
+    { time: "1:00",  customer: null,             vehicle: null,                     service: null,                                                                status: "open",       tech: null },
+    { time: "2:30",  customer: "Roberto Paz",    vehicle: "Toyota Camry 2021",      service: isEn ? "Pre-trip inspection" : "Revisión pre-viaje",                 status: "scheduled",  tech: "Carlos M." },
+    { time: "4:00",  customer: null,             vehicle: null,                     service: null,                                                                status: "open",       tech: null },
   ];
+  const bookedCount = apts.filter((a) => a.status !== "open").length;
+  const openCount = apts.filter((a) => a.status === "open").length;
 
   return (
     <section className="panel">
       <div className="panel-title">
         <div>
-          <h2>Agenda del día</h2>
-          <p>Sábado, 20 de junio · {apts.filter((a) => a.status !== "open").length} citas · {apts.filter((a) => a.status === "open").length} espacios disponibles</p>
+          <h2>{t("appointmentsTitle")}</h2>
+          <p>{t("scheduleDate")} · {bookedCount} {isEn ? "appts" : "citas"} · {openCount} {isEn ? "open slots" : "espacios disponibles"}</p>
         </div>
-        <button className="primary small" onClick={onBook}>+ Nueva cita</button>
+        <button className="primary small" onClick={onBook}>+ {t("newApptBtn")}</button>
       </div>
       <div className="timeline">
         {apts.map((a) => (
@@ -272,12 +283,12 @@ function AppointmentsPanel({ onBook }) {
             <span className={`timeline-dot${a.status === "active" ? " active" : a.status === "open" ? " empty" : ""}`} />
             <article>
               {a.status === "open" ? (
-                <div className="open-slot"><strong>Cita disponible</strong><button onClick={onBook}>Reservar</button></div>
+                <div className="open-slot"><strong>{t("apptSlot")}</strong><button onClick={onBook}>{t("reserveBtn")}</button></div>
               ) : (
                 <>
                   <strong>{a.service}</strong>
                   <p>{a.customer} · {a.vehicle}</p>
-                  <i className={a.status === "active" ? "" : "scheduled"}>{a.status === "active" ? "En proceso" : "Confirmada"} · {a.tech}</i>
+                  <i className={a.status === "active" ? "" : "scheduled"}>{a.status === "active" ? t("apptInProgress") : t("apptConfirmed")} · {a.tech}</i>
                 </>
               )}
             </article>
@@ -289,20 +300,33 @@ function AppointmentsPanel({ onBook }) {
 }
 
 function WorkOrdersPanel() {
+  const t = useT();
+  const { lang } = useLang();
+  const isEn = lang === "en";
   const orders = [
-    { id: "WO-041", customer: "Taylor Kim",    vehicle: "Subaru Outback 2020",   service: "Cambio de aceite e inspección",    status: "En proceso",              tech: "Carlos M.", est: "$89",    odo: "58,200" },
-    { id: "WO-040", customer: "Diana Torres",  vehicle: "Ford F-150 2019",       service: "Reemplazo de pastillas de freno",  status: "En espera de piezas",     tech: "Ana V.",    est: "$280",   odo: "94,100" },
-    { id: "WO-039", customer: "Sam Okoro",     vehicle: "Tesla Model 3 2022",    service: "Diagnóstico de advertencia",       status: "Pendiente de aprobación", tech: "Luis R.",   est: "—",      odo: "22,400" },
-    { id: "WO-038", customer: "Marcus Hill",   vehicle: "Chevrolet Malibu 2018", service: "Diagnóstico de frenos",            status: "Programada",              tech: "Ana V.",    est: "$320",   odo: "88,750" },
-    { id: "WO-037", customer: "Ana Cruz",      vehicle: "Honda Civic 2016",      service: "Reparación de A/C",               status: "Programada",              tech: "Luis R.",   est: "$540",   odo: "71,330" },
+    { id: "WO-041", customer: "Taylor Kim",    vehicle: "Subaru Outback 2020",   service: isEn ? "Oil change & inspection"     : "Cambio de aceite e inspección",    statusKey: "in_progress",   tech: "Carlos M.", est: "$89",    odo: "58,200" },
+    { id: "WO-040", customer: "Diana Torres",  vehicle: "Ford F-150 2019",       service: isEn ? "Brake pad replacement"       : "Reemplazo de pastillas de freno",  statusKey: "waiting_parts", tech: "Ana V.",    est: "$280",   odo: "94,100" },
+    { id: "WO-039", customer: "Sam Okoro",     vehicle: "Tesla Model 3 2022",    service: isEn ? "Warning light diagnosis"     : "Diagnóstico de advertencia",       statusKey: "pending_approval", tech: "Luis R.", est: "—",     odo: "22,400" },
+    { id: "WO-038", customer: "Marcus Hill",   vehicle: "Chevrolet Malibu 2018", service: isEn ? "Brake diagnosis"             : "Diagnóstico de frenos",            statusKey: "scheduled",     tech: "Ana V.",    est: "$320",   odo: "88,750" },
+    { id: "WO-037", customer: "Ana Cruz",      vehicle: "Honda Civic 2016",      service: isEn ? "A/C repair"                  : "Reparación de A/C",                statusKey: "scheduled",     tech: "Luis R.",   est: "$540",   odo: "71,330" },
   ];
-  const colors = { "En proceso": "#4ade80", "En espera de piezas": "#fbbf24", "Pendiente de aprobación": "#f97316", "Programada": "#60a5fa", "Completada": "#94a3b8" };
+  const statusLabel = {
+    in_progress:      isEn ? "In progress"         : "En proceso",
+    waiting_parts:    isEn ? "Waiting on parts"    : "En espera de piezas",
+    pending_approval: isEn ? "Pending approval"    : "Pendiente de aprobación",
+    scheduled:        isEn ? "Scheduled"           : "Programada",
+    completed:        isEn ? "Completed"           : "Completada",
+  };
+  const statusColor = {
+    in_progress: "#4ade80", waiting_parts: "#fbbf24", pending_approval: "#f97316",
+    scheduled: "#60a5fa", completed: "#94a3b8",
+  };
 
   return (
     <section className="panel">
       <div className="panel-title">
-        <div><h2>Órdenes de trabajo</h2><p>{orders.length} activas</p></div>
-        <button className="primary small">+ Nueva orden</button>
+        <div><h2>{t("workOrdersTitle")}</h2><p>{orders.length} {isEn ? "active" : "activas"}</p></div>
+        <button className="primary small">+ {t("newOrderBtn")}</button>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
         {orders.map((o) => (
@@ -319,8 +343,8 @@ function WorkOrdersPanel() {
               <div style={{ fontSize: 13, color: "#f1f5f9", fontWeight: 600, marginBottom: 5 }}>{o.est}</div>
               <span style={{
                 fontSize: 9, padding: "3px 8px", borderRadius: 20,
-                border: `1px solid ${colors[o.status]}44`, color: colors[o.status], background: `${colors[o.status]}11`,
-              }}>{o.status}</span>
+                border: `1px solid ${statusColor[o.statusKey]}44`, color: statusColor[o.statusKey], background: `${statusColor[o.statusKey]}11`,
+              }}>{statusLabel[o.statusKey]}</span>
             </div>
           </article>
         ))}
@@ -330,6 +354,9 @@ function WorkOrdersPanel() {
 }
 
 function CustomersPanel({ requests }) {
+  const t = useT();
+  const { lang } = useLang();
+  const isEn = lang === "en";
   const [search, setSearch] = useState("");
   const seen = new Set();
   const fromRequests = requests.filter((r) => r.customer && !seen.has(r.customer) && seen.add(r.customer));
@@ -344,10 +371,10 @@ function CustomersPanel({ requests }) {
   return (
     <section className="panel">
       <div className="panel-title">
-        <div><h2>Clientes</h2><p>{allCustomers.length} registrados</p></div>
+        <div><h2>{t("customersTitle")}</h2><p>{allCustomers.length} {isEn ? "registered" : "registrados"}</p></div>
       </div>
       <input
-        placeholder="Buscar por nombre o vehículo..."
+        placeholder={t("searchCustomerPlaceholder")}
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         style={{
@@ -707,6 +734,7 @@ function ScoutPanel() {
 }
 
 function BookingModal({ onClose }) {
+  const t = useT();
   const [form, setForm] = useState({ customer: "", vehicle: "", service: "", time: "", tech: "", notes: "" });
   const [saved, setSaved] = useState(false);
 
@@ -735,27 +763,27 @@ function BookingModal({ onClose }) {
     <div className="modal-backdrop centered" onClick={onClose}>
       <section className="auth-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
         <button className="drawer-close" onClick={onClose}><X /></button>
-        <span className="eyebrow dark"><Calendar size={15} /> Nueva cita</span>
-        <h2>Reservar espacio</h2>
+        <span className="eyebrow dark"><Calendar size={15} /> {t("bookingEyebrow")}</span>
+        <h2>{t("bookingTitle")}</h2>
         {saved ? (
           <div style={{ textAlign: "center", padding: "24px 0" }}>
             <div style={{ fontSize: 40, marginBottom: 12 }}>✅</div>
-            <div style={{ color: "#4ade80", fontWeight: 600, fontSize: 14 }}>Cita agendada correctamente</div>
+            <div style={{ color: "#4ade80", fontWeight: 600, fontSize: 14 }}>{t("bookingConfirmed")}</div>
           </div>
         ) : (
           <>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {field("Cliente *", "customer", "Nombre completo")}
-              {field("Vehículo", "vehicle", "Año Marca Modelo")}
-              {field("Servicio *", "service", "Describe el servicio solicitado")}
-              {field("Hora *", "time", "Ej: 1:00 PM")}
-              {field("Técnico asignado", "tech", "Nombre del técnico")}
+              {field(t("customerLabel"), "customer", t("customerPlaceholder"))}
+              {field(t("vehicleLabel"), "vehicle", t("vehiclePlaceholder"))}
+              {field(t("serviceLabel"), "service", t("servicePlaceholder"))}
+              {field(t("timeLabel"), "time", t("timePlaceholder"))}
+              {field(t("techLabel"), "tech", t("techPlaceholder"))}
               <label style={{ fontSize: 10, color: "#64748b" }}>
-                Notas
+                {t("notesLabel")}
                 <textarea
                   value={form.notes} rows={2}
                   onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
-                  placeholder="Instrucciones especiales, historial previo..."
+                  placeholder={t("notesPlaceholder")}
                   style={{
                     width: "100%", marginTop: 4, background: "#0a1020", border: "1px solid #1e2d47",
                     color: "#e2e8f0", padding: "10px 14px", borderRadius: 4, fontSize: 12,
@@ -768,7 +796,7 @@ function BookingModal({ onClose }) {
               className="primary full" style={{ marginTop: 16, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
               onClick={book} disabled={!form.customer || !form.service || !form.time}
             >
-              <Calendar size={16} /> Confirmar cita
+              <Calendar size={16} /> {t("confirmApptBtn")}
             </button>
           </>
         )}
@@ -778,6 +806,8 @@ function BookingModal({ onClose }) {
 }
 
 function MessageModal({ request, onClose }) {
+  const t = useT();
+  const { lang } = useLang();
   const [msg, setMsg] = useState("");
   const [sent, setSent] = useState(false);
 
@@ -791,20 +821,20 @@ function MessageModal({ request, onClose }) {
     <div className="modal-backdrop centered" onClick={onClose}>
       <section className="auth-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 440 }}>
         <button className="drawer-close" onClick={onClose}><X /></button>
-        <span className="eyebrow dark"><MessageSquareText size={15} /> Mensaje al cliente</span>
-        <h2>{request?.customer || "Cliente"}</h2>
+        <span className="eyebrow dark"><MessageSquareText size={15} /> {t("msgEyebrow")}</span>
+        <h2>{request?.customer || (lang === "en" ? "Customer" : "Cliente")}</h2>
         <p style={{ fontSize: 11, color: "#64748b", marginBottom: 16 }}>{request?.vehicle} · {request?.distance}</p>
         {sent ? (
           <div style={{ textAlign: "center", padding: "24px 0" }}>
             <div style={{ fontSize: 40, marginBottom: 12 }}>✉️</div>
-            <div style={{ color: "#4ade80", fontWeight: 600, fontSize: 14 }}>Mensaje enviado</div>
+            <div style={{ color: "#4ade80", fontWeight: 600, fontSize: 14 }}>{t("msgSent")}</div>
           </div>
         ) : (
           <>
             <textarea
               value={msg} rows={5}
               onChange={(e) => setMsg(e.target.value)}
-              placeholder="Escribe tu mensaje para el cliente..."
+              placeholder={t("msgPlaceholder")}
               style={{
                 width: "100%", background: "#0a1020", border: "1px solid #1e2d47",
                 color: "#e2e8f0", padding: "12px 14px", borderRadius: 6, fontSize: 12,
@@ -815,7 +845,7 @@ function MessageModal({ request, onClose }) {
               className="primary full" style={{ marginTop: 12, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
               onClick={send} disabled={!msg.trim()}
             >
-              Enviar mensaje <ArrowRight size={16} />
+              {t("sendBtn")} <ArrowRight size={16} />
             </button>
           </>
         )}
@@ -2190,7 +2220,7 @@ function Sidebar({ active, setActive, shopProfile }) {
       <Brand />
       <div className="shop-identity">
         <span>{(shopProfile?.shopName || "RS").slice(0, 2).toUpperCase()}</span>
-        <div><strong>{shopProfile?.shopName || "Configura tu taller"}</strong><small>{shopProfile?.claimed ? t("claimed") : "Admin"}</small></div>
+        <div><strong>{shopProfile?.shopName || t("setupShopName")}</strong><small>{shopProfile?.claimed ? t("claimed") : "Admin"}</small></div>
         <ChevronDown size={16} />
       </div>
       <nav>
@@ -2212,29 +2242,36 @@ function Sidebar({ active, setActive, shopProfile }) {
 }
 
 function ShopProfilePanel({ profileForm, setProfileForm, onSave, profileSaving, profileMessage }) {
+  const { lang } = useLang();
+  const isEn = lang === "en";
   const specialtyText = Array.isArray(profileForm.specialties) ? profileForm.specialties.join(", ") : "";
   return (
     <section className="panel shop-profile-panel">
       <div className="panel-title">
-        <div><h2>Perfil del taller</h2><p>Estos datos preparan tu taller para recibir solicitudes reales y cotizar mejor.</p></div>
-        <span className={profileForm.claimed ? "live-badge on" : "live-badge"}>{profileForm.claimed ? "Reclamado" : "Pendiente"}</span>
+        <div>
+          <h2>{isEn ? "Shop Profile" : "Perfil del taller"}</h2>
+          <p>{isEn ? "This info prepares your shop to receive real requests and quote faster." : "Estos datos preparan tu taller para recibir solicitudes reales y cotizar mejor."}</p>
+        </div>
+        <span className={profileForm.claimed ? "live-badge on" : "live-badge"}>{profileForm.claimed ? (isEn ? "Claimed" : "Reclamado") : (isEn ? "Pending" : "Pendiente")}</span>
       </div>
       <div className="profile-form">
-        <label>Nombre del taller<input value={profileForm.shopName || ""} onChange={(e) => setProfileForm((c) => ({ ...c, shopName: e.target.value }))} /></label>
-        <label>Contacto principal<input value={profileForm.contactName || ""} onChange={(e) => setProfileForm((c) => ({ ...c, contactName: e.target.value }))} /></label>
-        <label>Teléfono<input value={profileForm.phone || ""} onChange={(e) => setProfileForm((c) => ({ ...c, phone: e.target.value }))} /></label>
-        <label>Correo del taller<input type="email" value={profileForm.email || ""} onChange={(e) => setProfileForm((c) => ({ ...c, email: e.target.value }))} /></label>
-        <label className="wide">Dirección<input value={profileForm.address || ""} onChange={(e) => setProfileForm((c) => ({ ...c, address: e.target.value }))} /></label>
-        <label>Ciudad<input value={profileForm.city || ""} onChange={(e) => setProfileForm((c) => ({ ...c, city: e.target.value }))} /></label>
-        <label>Estado<input value={profileForm.state || ""} onChange={(e) => setProfileForm((c) => ({ ...c, state: e.target.value }))} /></label>
-        <label>Código postal<input value={profileForm.zip || ""} onChange={(e) => setProfileForm((c) => ({ ...c, zip: e.target.value }))} /></label>
-        <label>Tarifa de mano de obra<input value={profileForm.laborRate || ""} onChange={(e) => setProfileForm((c) => ({ ...c, laborRate: e.target.value }))} placeholder="$145/h" /></label>
-        <label className="wide">Especialidades<input value={specialtyText} onChange={(e) => setProfileForm((c) => ({ ...c, specialties: e.target.value.split(",").map((i) => i.trim()).filter(Boolean) }))} placeholder="Frenos, suspensión, diagnóstico eléctrico" /></label>
-        <label className="wide">Garantía<input value={profileForm.warranty || ""} onChange={(e) => setProfileForm((c) => ({ ...c, warranty: e.target.value }))} placeholder="12 meses / 12,000 millas" /></label>
-        <label className="wide">Disponibilidad<input value={profileForm.availability || ""} onChange={(e) => setProfileForm((c) => ({ ...c, availability: e.target.value }))} placeholder="Lun–Vie 8am–6pm, sábados por cita" /></label>
+        <label>{isEn ? "Shop name" : "Nombre del taller"}<input value={profileForm.shopName || ""} onChange={(e) => setProfileForm((c) => ({ ...c, shopName: e.target.value }))} /></label>
+        <label>{isEn ? "Primary contact" : "Contacto principal"}<input value={profileForm.contactName || ""} onChange={(e) => setProfileForm((c) => ({ ...c, contactName: e.target.value }))} /></label>
+        <label>{isEn ? "Phone" : "Teléfono"}<input value={profileForm.phone || ""} onChange={(e) => setProfileForm((c) => ({ ...c, phone: e.target.value }))} /></label>
+        <label>{isEn ? "Shop email" : "Correo del taller"}<input type="email" value={profileForm.email || ""} onChange={(e) => setProfileForm((c) => ({ ...c, email: e.target.value }))} /></label>
+        <label className="wide">{isEn ? "Address" : "Dirección"}<input value={profileForm.address || ""} onChange={(e) => setProfileForm((c) => ({ ...c, address: e.target.value }))} /></label>
+        <label>{isEn ? "City" : "Ciudad"}<input value={profileForm.city || ""} onChange={(e) => setProfileForm((c) => ({ ...c, city: e.target.value }))} /></label>
+        <label>{isEn ? "State" : "Estado"}<input value={profileForm.state || ""} onChange={(e) => setProfileForm((c) => ({ ...c, state: e.target.value }))} /></label>
+        <label>{isEn ? "ZIP code" : "Código postal"}<input value={profileForm.zip || ""} onChange={(e) => setProfileForm((c) => ({ ...c, zip: e.target.value }))} /></label>
+        <label>{isEn ? "Labor rate" : "Tarifa de mano de obra"}<input value={profileForm.laborRate || ""} onChange={(e) => setProfileForm((c) => ({ ...c, laborRate: e.target.value }))} placeholder="$145/h" /></label>
+        <label className="wide">{isEn ? "Specialties" : "Especialidades"}<input value={specialtyText} onChange={(e) => setProfileForm((c) => ({ ...c, specialties: e.target.value.split(",").map((i) => i.trim()).filter(Boolean) }))} placeholder={isEn ? "Brakes, suspension, electrical diagnosis" : "Frenos, suspensión, diagnóstico eléctrico"} /></label>
+        <label className="wide">{isEn ? "Warranty" : "Garantía"}<input value={profileForm.warranty || ""} onChange={(e) => setProfileForm((c) => ({ ...c, warranty: e.target.value }))} placeholder={isEn ? "12 months / 12,000 miles" : "12 meses / 12,000 millas"} /></label>
+        <label className="wide">{isEn ? "Availability" : "Disponibilidad"}<input value={profileForm.availability || ""} onChange={(e) => setProfileForm((c) => ({ ...c, availability: e.target.value }))} placeholder={isEn ? "Mon–Fri 8am–6pm, Sat by appt" : "Lun–Vie 8am–6pm, sábados por cita"} /></label>
       </div>
       {profileMessage && <p className="profile-message">{profileMessage}</p>}
-      <button className="primary" onClick={onSave} disabled={profileSaving}>{profileSaving ? "Guardando..." : "Guardar y reclamar taller"} <Check size={17} /></button>
+      <button className="primary" onClick={onSave} disabled={profileSaving}>
+        {profileSaving ? (isEn ? "Saving..." : "Guardando...") : (isEn ? "Save & claim shop" : "Guardar y reclamar taller")} <Check size={17} />
+      </button>
     </section>
   );
 }

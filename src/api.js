@@ -12,7 +12,7 @@ async function request(path, options = {}) {
   const payload = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(payload.error || "No se pudo completar la solicitud.");
+    throw new Error(payload.error || "Request failed.");
   }
 
   return payload;

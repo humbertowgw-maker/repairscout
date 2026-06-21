@@ -13,6 +13,7 @@ const initialData = {
   users: [],
   vehicles: [],
   diagnoses: [],
+  itemizedQuotes: [],
 };
 
 async function ensureStore() {

@@ -94,3 +94,38 @@ export function getVehicles() {
 export function searchShops(zip, radius) {
   return request(`/api/shops/search?zip=${encodeURIComponent(zip)}&radius=${encodeURIComponent(radius)}`);
 }
+
+export function getSentQuotes() {
+  return request("/api/quotes/sent");
+}
+
+export function buildPartsQuote(input) {
+  return request("/api/quotes/build", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function sendItemizedQuote(input) {
+  return request("/api/quotes/send", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function getTrackingInfo(token) {
+  return request(`/api/track/${encodeURIComponent(token)}`);
+}
+
+export function approveRepairQuote(token) {
+  return request(`/api/track/${encodeURIComponent(token)}/approve`, {
+    method: "POST",
+  });
+}
+
+export function updateRepairStage(quoteId, stage) {
+  return request(`/api/quotes/${encodeURIComponent(quoteId)}/repair-stage`, {
+    method: "PATCH",
+    body: JSON.stringify({ stage }),
+  });
+}

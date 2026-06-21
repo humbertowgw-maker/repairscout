@@ -82,6 +82,25 @@ async function ensureDatabase() {
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
     );
+
+    create table if not exists itemized_quotes (
+      id uuid primary key,
+      token text unique not null,
+      quote_request_id uuid references quote_requests(id) on delete set null,
+      user_id uuid references users(id) on delete set null,
+      customer_name text not null,
+      customer_email text,
+      customer_phone text,
+      vehicle jsonb not null default '{}',
+      diagnosis jsonb not null default '{}',
+      quote_combo jsonb not null default '{}',
+      quote_single jsonb not null default '{}',
+      repair_stage text not null default 'Quote Sent',
+      customer_approved boolean not null default false,
+      approved_at timestamptz,
+      sent_at timestamptz,
+      created_at timestamptz not null default now()
+    );
   `);
 
   initialized = true;
@@ -341,6 +360,127 @@ export async function listQuoteRequests(shopName) {
   return (store.quoteRequests || []).filter(
     (quote) => !shopName || quote.shopName === shopName,
   );
+}
+
+// ── Itemized quotes ────────────────────────────────────────────────────────
+
+function mapIQRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    token: row.token,
+    quoteRequestId: row.quote_request_id,
+    userId: row.user_id,
+    customerName: row.customer_name,
+    customerEmail: row.customer_email,
+    customerPhone: row.customer_phone,
+    vehicle: row.vehicle || {},
+    diagnosis: row.diagnosis || {},
+    quoteCombo: row.quote_combo || {},
+    quoteSingle: row.quote_single || {},
+    repairStage: row.repair_stage,
+    customerApproved: row.customer_approved,
+    approvedAt: row.approved_at,
+    sentAt: row.sent_at,
+    createdAt: row.created_at,
+  };
+}
+
+export async function createItemizedQuote(q) {
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query(
+      `insert into itemized_quotes
+       (id, token, quote_request_id, user_id, customer_name, customer_email, customer_phone,
+        vehicle, diagnosis, quote_combo, quote_single, repair_stage, sent_at, created_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+       returning *`,
+      [
+        q.id, q.token, q.quoteRequestId || null, q.userId || null,
+        q.customerName, q.customerEmail || null, q.customerPhone || null,
+        JSON.stringify(q.vehicle || {}), JSON.stringify(q.diagnosis || {}),
+        JSON.stringify(q.quoteCombo || {}), JSON.stringify(q.quoteSingle || {}),
+        q.repairStage || "Quote Sent",
+        q.sentAt || new Date().toISOString(), q.createdAt || new Date().toISOString(),
+      ],
+    );
+    return mapIQRow(result.rows[0]);
+  }
+  await updateStore((store) => ({
+    ...store,
+    itemizedQuotes: [q, ...(store.itemizedQuotes || [])].slice(0, 200),
+  }));
+  return q;
+}
+
+export async function getItemizedQuoteByToken(token) {
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query("select * from itemized_quotes where token = $1 limit 1", [token]);
+    return mapIQRow(result.rows[0]);
+  }
+  const store = await readStore();
+  return (store.itemizedQuotes || []).find((q) => q.token === token) || null;
+}
+
+export async function updateRepairStage({ id, stage }) {
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query(
+      "update itemized_quotes set repair_stage = $2 where id = $1 returning *",
+      [id, stage],
+    );
+    return mapIQRow(result.rows[0]);
+  }
+  let updated = null;
+  await updateStore((store) => ({
+    ...store,
+    itemizedQuotes: (store.itemizedQuotes || []).map((q) => {
+      if (q.id !== id) return q;
+      updated = { ...q, repairStage: stage };
+      return updated;
+    }),
+  }));
+  return updated;
+}
+
+export async function listSentQuotes(userId) {
+  if (pool) {
+    await ensureDatabase();
+    const values = [];
+    let where = "";
+    if (userId) { values.push(userId); where = "where user_id = $1"; }
+    const result = await pool.query(
+      `select * from itemized_quotes ${where} order by created_at desc limit 100`,
+      values,
+    );
+    return result.rows.map(mapIQRow);
+  }
+  const store = await readStore();
+  const all = store.itemizedQuotes || [];
+  return userId ? all.filter((q) => q.userId === userId) : all;
+}
+
+export async function approveQuoteByToken(token) {
+  const now = new Date().toISOString();
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query(
+      "update itemized_quotes set customer_approved = true, approved_at = $2, repair_stage = 'Approved' where token = $1 returning *",
+      [token, now],
+    );
+    return mapIQRow(result.rows[0]);
+  }
+  let updated = null;
+  await updateStore((store) => ({
+    ...store,
+    itemizedQuotes: (store.itemizedQuotes || []).map((q) => {
+      if (q.token !== token) return q;
+      updated = { ...q, customerApproved: true, approvedAt: now, repairStage: "Approved" };
+      return updated;
+    }),
+  }));
+  return updated;
 }
 
 export async function updateQuoteRequestStatus({ id, shopName, status }) {

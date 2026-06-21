@@ -16,11 +16,14 @@ import {
   Gauge,
   Headphones,
   LayoutDashboard,
+  Mail,
   MapPin,
   Menu,
   MessageSquareText,
   PackageSearch,
+  Phone,
   Search,
+  Send,
   ShieldCheck,
   Sparkles,
   Star,
@@ -36,19 +39,25 @@ import {
   diagnosisResultsEn, partsResultsEn, shopsEn, quoteRequestsEn,
 } from "./demoData";
 import {
+  approveRepairQuote,
+  buildPartsQuote,
   createDiagnosis,
   decodeVin,
   getCurrentUser,
   getQuoteRequests,
+  getSentQuotes,
   getShopProfile,
   getSystemHealth,
+  getTrackingInfo,
   loginAccount,
   registerAccount,
   saveShopProfile,
   saveQuoteRequest,
   saveVehicle,
   searchShops,
+  sendItemizedQuote,
   updateQuoteRequestStatus,
+  updateRepairStage,
 } from "./api";
 import { T, confidenceDisplay, safetyLevelDisplay, statusDisplay, quoteStatusKeys } from "./i18n";
 
@@ -426,27 +435,159 @@ function PartsSearchPanel() {
   );
 }
 
+const inputStyle = {
+  width: "100%", marginTop: 4, background: "#0a1020", border: "1px solid #1e2d47",
+  color: "#e2e8f0", padding: "9px 12px", borderRadius: 5, fontSize: 12,
+  fontFamily: "inherit", outline: "none", display: "block",
+};
+
+function DiagnosisResultCards({ result, lang }) {
+  const t = useT();
+  const [scoutQuote, setScoutQuote] = useState(null);
+  const [scoutQuoteLoading, setScoutQuoteLoading] = useState(false);
+  const [selectedOption, setSelectedOption] = useState("combo");
+  const [sendOpen, setSendOpen] = useState(false);
+
+  const buildQuote = async () => {
+    setScoutQuoteLoading(true);
+    try {
+      const q = await buildPartsQuote({ diagnosis: result, vehicle: {}, language: lang });
+      setScoutQuote(q);
+    } catch (e) { console.error(e); }
+    finally { setScoutQuoteLoading(false); }
+  };
+
+  return (
+    <div style={{ marginTop: 20 }}>
+      {result.possibleCauses?.map((c, i) => (
+        <article key={c.title} className="card" style={{
+          padding: "14px 16px", marginBottom: 8,
+          border: i === 0 ? "1px solid rgba(249,115,22,.3)" : "1px solid #151c2a",
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+            <strong style={{ fontSize: 13, color: "#f1f5f9" }}>{c.title}</strong>
+            <span style={{
+              fontSize: 10, color: i === 0 ? "#f97316" : "#64748b",
+              border: `1px solid ${i === 0 ? "rgba(249,115,22,.3)" : "#1e2d47"}`,
+              borderRadius: 3, padding: "2px 7px",
+            }}>{c.probability}%</span>
+          </div>
+          <p style={{ fontSize: 11, color: "#64748b", lineHeight: 1.6, marginBottom: 4 }}>{c.reason}</p>
+          {c.test && (
+            <small style={{ fontSize: 10, color: "#475569", display: "flex", alignItems: "center", gap: 4 }}>
+              <Search size={11} /> {t("scoutVerify")} {c.test}
+            </small>
+          )}
+        </article>
+      ))}
+      {result.estimate && (
+        <div className="card" style={{
+          padding: "14px 16px", marginTop: 8,
+          background: "rgba(249,115,22,.04)", border: "1px solid rgba(249,115,22,.12)",
+        }}>
+          <div style={{ fontSize: 10, color: "#f97316", marginBottom: 4, letterSpacing: ".1em" }}>{t("scoutEstimate")}</div>
+          <div style={{ fontSize: 24, fontWeight: 700, color: "#f1f5f9" }}>
+            ${result.estimate.low ?? "—"}–${result.estimate.high ?? "—"}
+          </div>
+          <p style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>{result.estimate.repairLabel}</p>
+        </div>
+      )}
+      <button
+        className="primary full" style={{ marginTop: 12, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+        onClick={buildQuote} disabled={scoutQuoteLoading}
+      >
+        {scoutQuoteLoading
+          ? (lang === "en" ? "Building quote…" : "Generando cotización…")
+          : <><PackageSearch size={15} /> {lang === "en" ? "Build Parts Quote" : "Generar cotización de piezas"}</>}
+      </button>
+      {scoutQuote && (
+        <>
+          <div style={{ display: "flex", gap: 12, marginTop: 16, flexWrap: "wrap" }}>
+            <QuoteCard option={scoutQuote.quotes.combo} selected={selectedOption === "combo"} onSelect={() => setSelectedOption("combo")} lang={lang} />
+            <QuoteCard option={scoutQuote.quotes.single} selected={selectedOption === "single"} onSelect={() => setSelectedOption("single")} lang={lang} />
+          </div>
+          <button className="primary" style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 8 }} onClick={() => setSendOpen(true)}>
+            <Send size={15} /> {lang === "en" ? "Send Quote to Customer" : "Enviar cotización al cliente"}
+          </button>
+          {sendOpen && (
+            <SendQuoteModal
+              quoteData={scoutQuote}
+              selectedOption={selectedOption}
+              vehicle={scoutQuote.vehicle}
+              lang={lang}
+              onClose={() => setSendOpen(false)}
+              onSent={() => {}}
+            />
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function ScoutPanel() {
   const { lang } = useLang();
   const t = useT();
-  const [query, setQuery] = useState("");
+  const isEn = lang === "en";
+  const [mode, setMode] = useState("ai");
   const [vehicle, setVehicle] = useState({ year: "2019", make: "Honda", model: "Accord" });
-  const [result, setResult] = useState(null);
+  const [mileage, setMileage] = useState("62,000");
+
+  // AI mode state
+  const [query, setQuery] = useState("");
+  const [aiResult, setAiResult] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  const run = async () => {
+  // Manual mode state
+  const [causes, setCauses] = useState([
+    { title: "", reason: "", test: "", probability: 80 },
+    { title: "", reason: "", test: "", probability: 50 },
+  ]);
+  const [laborLow, setLaborLow] = useState("1.5");
+  const [laborHigh, setLaborHigh] = useState("3");
+  const [manualResult, setManualResult] = useState(null);
+
+  const runAI = async () => {
     if (!query.trim()) return;
-    setLoading(true);
-    setResult(null);
+    setLoading(true); setAiResult(null);
     try {
-      const r = await createDiagnosis({ vehicle, mileage: "62,000", description: query, zip: "95814", language: lang });
-      setResult(r);
-    } catch (e) {
-      setResult({ error: e.message });
-    } finally {
-      setLoading(false);
-    }
+      const r = await createDiagnosis({ vehicle, mileage, description: query, zip: "95814", language: lang });
+      setAiResult(r);
+    } catch (e) { setAiResult({ error: e.message }); }
+    finally { setLoading(false); }
   };
+
+  const runManual = () => {
+    const filledCauses = causes.filter((c) => c.title.trim());
+    if (!filledCauses.length) return;
+    setManualResult({
+      summary: filledCauses[0].title,
+      source: "manual",
+      possibleCauses: filledCauses.map((c, i) => ({
+        ...c, probability: c.probability || (80 - i * 20), urgency: isEn ? "Verify" : "Verificar", tone: i === 0 ? "warn" : "neutral",
+      })),
+      estimate: {
+        low: 0, high: 0, repairLabel: filledCauses[0].title,
+        laborHoursLow: Number(laborLow) || 1.5,
+        laborHoursHigh: Number(laborHigh) || 3,
+      },
+    });
+  };
+
+  const VehicleInputs = () => (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 8, marginBottom: 12 }}>
+      {[[t("scoutYear"), "year"], [t("scoutMake"), "make"], [t("scoutModel"), "model"]].map(([label, key]) => (
+        <label key={key} style={{ fontSize: 10, color: "#64748b" }}>
+          {label}
+          <input value={vehicle[key]} onChange={(e) => setVehicle((v) => ({ ...v, [key]: e.target.value }))} style={inputStyle} />
+        </label>
+      ))}
+      <label style={{ fontSize: 10, color: "#64748b" }}>
+        {isEn ? "Mileage" : "Millaje"}
+        <input value={mileage} onChange={(e) => setMileage(e.target.value)} style={inputStyle} />
+      </label>
+    </div>
+  );
 
   return (
     <section className="panel">
@@ -457,70 +598,89 @@ function ScoutPanel() {
           <p>{t("scoutDesc")}</p>
         </div>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12 }}>
-        {[[t("scoutYear"), "year"], [t("scoutMake"), "make"], [t("scoutModel"), "model"]].map(([label, key]) => (
-          <label key={key} style={{ fontSize: 10, color: "#64748b" }}>
+
+      {/* Mode toggle */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 18, borderBottom: "1px solid #1e2d47", paddingBottom: 14 }}>
+        {[["ai", <><Bot size={14} /> {isEn ? "AI Diagnosis" : "Diagnóstico IA"}</>],
+          ["manual", <><Wrench size={14} /> {isEn ? "Manual Entry" : "Entrada manual"}</>]
+        ].map(([key, label]) => (
+          <button
+            key={key} onClick={() => setMode(key)}
+            style={{
+              display: "flex", alignItems: "center", gap: 6, padding: "7px 14px",
+              borderRadius: 6, border: mode === key ? "1px solid #f97316" : "1px solid #1e2d47",
+              background: mode === key ? "rgba(249,115,22,.1)" : "transparent",
+              color: mode === key ? "#f97316" : "#64748b", cursor: "pointer", fontSize: 12, fontFamily: "inherit",
+            }}
+          >
             {label}
-            <input
-              value={vehicle[key]}
-              onChange={(e) => setVehicle((v) => ({ ...v, [key]: e.target.value }))}
-              style={{
-                width: "100%", marginTop: 4, background: "#0a1020", border: "1px solid #1e2d47",
-                color: "#e2e8f0", padding: "8px 10px", borderRadius: 4, fontSize: 11, fontFamily: "inherit", outline: "none", display: "block",
-              }}
-            />
-          </label>
+          </button>
         ))}
       </div>
-      <textarea
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder={t("scoutPlaceholder")}
-        rows={4}
-        style={{
-          width: "100%", background: "#0a1020", border: "1px solid #1e2d47", color: "#e2e8f0",
-          padding: "12px 14px", borderRadius: 6, fontSize: 12, fontFamily: "inherit", outline: "none",
-          resize: "vertical", marginBottom: 12,
-        }}
-      />
-      <button className="primary full" onClick={run} disabled={loading || !query.trim()} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-        {loading ? t("scoutAnalyzing") : <><Bot size={16} /> {t("scoutBtn")}</>}
-      </button>
 
-      {result && !result.error && (
-        <div style={{ marginTop: 20 }}>
-          {result.possibleCauses?.map((c, i) => (
-            <article key={c.title} className="card" style={{
-              padding: "14px 16px", marginBottom: 8,
-              border: i === 0 ? "1px solid rgba(249,115,22,.3)" : "1px solid #151c2a",
-            }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                <strong style={{ fontSize: 13, color: "#f1f5f9" }}>{c.title}</strong>
-                <span style={{
-                  fontSize: 10, color: i === 0 ? "#f97316" : "#64748b",
-                  border: `1px solid ${i === 0 ? "rgba(249,115,22,.3)" : "#1e2d47"}`,
-                  borderRadius: 3, padding: "2px 7px",
-                }}>{c.probability}%</span>
+      <VehicleInputs />
+
+      {mode === "ai" ? (
+        <>
+          <textarea
+            value={query} onChange={(e) => setQuery(e.target.value)}
+            placeholder={t("scoutPlaceholder")} rows={4}
+            style={{ ...inputStyle, resize: "vertical", marginBottom: 12, padding: "12px 14px" }}
+          />
+          <button className="primary full" onClick={runAI} disabled={loading || !query.trim()} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            {loading ? t("scoutAnalyzing") : <><Bot size={16} /> {t("scoutBtn")}</>}
+          </button>
+          {aiResult && !aiResult.error && <DiagnosisResultCards result={aiResult} lang={lang} />}
+          {aiResult?.error && <p className="form-error" style={{ marginTop: 12 }}>{aiResult.error}</p>}
+        </>
+      ) : (
+        <>
+          <div style={{ fontSize: 11, color: "#64748b", marginBottom: 10 }}>
+            {isEn ? "Enter your findings. Leave blank rows unused." : "Ingresa tus hallazgos. Deja las filas en blanco sin usar."}
+          </div>
+          {causes.map((c, i) => (
+            <div key={i} style={{ marginBottom: 14, padding: "12px 14px", border: "1px solid #1e2d47", borderRadius: 8, background: "#0a1020" }}>
+              <div style={{ fontSize: 10, color: "#f97316", fontWeight: 600, marginBottom: 8 }}>
+                {isEn ? `Finding ${i + 1}${i === 0 ? " (Primary)" : ""}` : `Hallazgo ${i + 1}${i === 0 ? " (Principal)" : ""}`}
               </div>
-              <p style={{ fontSize: 11, color: "#64748b", lineHeight: 1.6, marginBottom: 4 }}>{c.reason}</p>
-              <small style={{ fontSize: 10, color: "#475569", display: "flex", alignItems: "center", gap: 4 }}>
-                <Search size={11} /> {t("scoutVerify")} {c.test}
-              </small>
-            </article>
-          ))}
-          {result.estimate && (
-            <div className="card" style={{
-              padding: "14px 16px", marginTop: 8,
-              background: "rgba(249,115,22,.04)", border: "1px solid rgba(249,115,22,.12)",
-            }}>
-              <div style={{ fontSize: 10, color: "#f97316", marginBottom: 4, letterSpacing: ".1em" }}>{t("scoutEstimate")}</div>
-              <div style={{ fontSize: 24, fontWeight: 700, color: "#f1f5f9" }}>${result.estimate.low}–${result.estimate.high}</div>
-              <p style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>{result.estimate.repairLabel}</p>
+              {[
+                [isEn ? "Cause / finding *" : "Causa / hallazgo *", "title", isEn ? "e.g. Worn front brake pads" : "ej. Pastillas de freno desgastadas"],
+                [isEn ? "Why / evidence" : "Por qué / evidencia", "reason", isEn ? "e.g. Squealing noise, pad thickness < 2mm" : "ej. Rechinido, espesor < 2mm"],
+                [isEn ? "Test / procedure" : "Prueba / procedimiento", "test", isEn ? "e.g. Measure pad thickness and rotor runout" : "ej. Medir espesor y desviación del rotor"],
+              ].map(([label, field, ph]) => (
+                <label key={field} style={{ fontSize: 10, color: "#64748b", display: "block", marginBottom: 6 }}>
+                  {label}
+                  <input
+                    value={c[field]} placeholder={ph}
+                    onChange={(e) => setCauses((cs) => cs.map((x, j) => j === i ? { ...x, [field]: e.target.value } : x))}
+                    style={inputStyle}
+                  />
+                </label>
+              ))}
             </div>
-          )}
-        </div>
+          ))}
+          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+            {[[isEn ? "Labor hours (min)" : "Horas mano de obra (mín)", laborLow, setLaborLow],
+              [isEn ? "Labor hours (max)" : "Horas mano de obra (máx)", laborHigh, setLaborHigh]
+            ].map(([label, val, setter]) => (
+              <label key={label} style={{ flex: 1, fontSize: 10, color: "#64748b" }}>
+                {label}
+                <input type="number" value={val} min="0.5" max="20" step="0.5"
+                  onChange={(e) => setter(e.target.value)} style={inputStyle} />
+              </label>
+            ))}
+          </div>
+          <button
+            className="primary full"
+            onClick={runManual}
+            disabled={!causes[0].title.trim()}
+            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+          >
+            <PackageSearch size={16} /> {isEn ? "Generate Parts Quote" : "Generar cotización de piezas"}
+          </button>
+          {manualResult && <DiagnosisResultCards result={manualResult} lang={lang} />}
+        </>
       )}
-      {result?.error && <p className="form-error" style={{ marginTop: 12 }}>{result.error}</p>}
     </section>
   );
 }
@@ -643,6 +803,510 @@ function MessageModal({ request, onClose }) {
   );
 }
 
+/* ── Parts quote components ── */
+
+const REPAIR_STAGES = [
+  "Quote Sent",
+  "Approved",
+  "Parts Ordered",
+  "In Progress",
+  "Ready for Pickup",
+  "Completed",
+];
+
+const STAGE_LABELS = {
+  es: {
+    "Quote Sent":       "Cotización enviada",
+    "Approved":         "Aprobada",
+    "Parts Ordered":    "Piezas pedidas",
+    "In Progress":      "En proceso",
+    "Ready for Pickup": "Lista para recoger",
+    "Completed":        "Completada",
+  },
+  en: {
+    "Quote Sent":       "Quote Sent",
+    "Approved":         "Approved",
+    "Parts Ordered":    "Parts Ordered",
+    "In Progress":      "In Progress",
+    "Ready for Pickup": "Ready for Pickup",
+    "Completed":        "Completed",
+  },
+};
+
+function fmt(n) { return n != null ? `$${Number(n).toFixed(2)}` : "—"; }
+
+function QuoteCard({ option, selected, onSelect, lang }) {
+  const isEn = lang === "en";
+  const [expanded, setExpanded] = useState(false);
+  if (!option) return null;
+  const isCombo = option.storeCount > 1;
+  const accentColor = isCombo ? "#f97316" : "#38bdf8";
+
+  return (
+    <article style={{
+      border: selected ? `1.5px solid ${accentColor}` : "1px solid #1e2d47",
+      borderRadius: 10, padding: "18px 20px", background: "#0c1524",
+      flex: 1, minWidth: 260, display: "flex", flexDirection: "column", gap: 10,
+      position: "relative",
+    }}>
+      {selected && (
+        <span style={{
+          position: "absolute", top: -10, left: 18,
+          background: accentColor, color: "#fff", fontSize: 9,
+          fontWeight: 700, letterSpacing: ".08em", padding: "3px 10px", borderRadius: 20,
+        }}>{isEn ? "SELECTED" : "SELECCIONADO"}</span>
+      )}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#f1f5f9" }}>{option.label}</div>
+          <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>{option.description}</div>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontSize: 18, fontWeight: 700, color: accentColor }}>
+            {fmt(option.totalLow)}–{fmt(option.totalHigh)}
+          </div>
+          <div style={{ fontSize: 10, color: "#475569" }}>{isEn ? "est. total" : "total est."}</div>
+        </div>
+      </div>
+
+      {/* Cost breakdown */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11 }}>
+        {[
+          [isEn ? "Parts" : "Piezas", fmt(option.partsCost)],
+          [isEn ? "Labor (est.)" : "Mano de obra (est.)", `${fmt(option.laborLow)}–${fmt(option.laborHigh)}`],
+          [isEn ? "Tax (est.)" : "Impuesto (est.)", `${fmt(option.taxLow)}–${fmt(option.taxHigh)}`],
+        ].map(([label, value]) => (
+          <div key={label} style={{ display: "flex", justifyContent: "space-between", color: "#64748b" }}>
+            <span>{label}</span><strong style={{ color: "#94a3b8" }}>{value}</strong>
+          </div>
+        ))}
+      </div>
+
+      {/* Store info */}
+      {option.storeName && (
+        <div style={{
+          background: "rgba(56,189,248,.05)", border: "1px solid rgba(56,189,248,.1)",
+          borderRadius: 6, padding: "8px 12px", fontSize: 11, color: "#38bdf8",
+        }}>
+          <Store size={13} style={{ marginRight: 5, verticalAlign: "middle" }} />
+          {isEn ? "All from" : "Todo de"} <strong>{option.storeName}</strong>
+        </div>
+      )}
+      {isCombo && (
+        <div style={{
+          background: "rgba(249,115,22,.05)", border: "1px solid rgba(249,115,22,.1)",
+          borderRadius: 6, padding: "8px 12px", fontSize: 11, color: "#f97316",
+        }}>
+          <PackageSearch size={13} style={{ marginRight: 5, verticalAlign: "middle" }} />
+          {isEn ? `Best price from ${option.storeCount} stores` : `Mejor precio de ${option.storeCount} tiendas`}
+        </div>
+      )}
+
+      {/* Expand/collapse parts list */}
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        style={{
+          background: "transparent", border: "1px solid #1e2d47", color: "#64748b",
+          borderRadius: 6, padding: "6px 12px", fontSize: 11, cursor: "pointer",
+          display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+          fontFamily: "inherit",
+        }}
+      >
+        <PackageSearch size={13} />
+        {expanded
+          ? (isEn ? "Hide parts list" : "Ocultar lista de piezas")
+          : (isEn ? "View parts list" : "Ver lista de piezas")}
+        <ChevronDown size={13} style={{ transform: expanded ? "rotate(180deg)" : "", transition: ".2s" }} />
+      </button>
+
+      {expanded && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+          <div style={{
+            display: "grid", gridTemplateColumns: "1fr auto auto", gap: "4px 12px",
+            fontSize: 10, color: "#475569", fontWeight: 600, letterSpacing: ".06em",
+            padding: "6px 0", borderBottom: "1px solid #1e2d47", marginBottom: 4,
+          }}>
+            <span>{isEn ? "PART" : "PIEZA"}</span>
+            <span style={{ textAlign: "right" }}>{isEn ? "STORE" : "TIENDA"}</span>
+            <span style={{ textAlign: "right" }}>{isEn ? "PRICE" : "PRECIO"}</span>
+          </div>
+          {(option.lineItems || []).map((item) => (
+            <div key={item.partKey} style={{
+              display: "grid", gridTemplateColumns: "1fr auto auto",
+              gap: "2px 12px", padding: "6px 0", borderBottom: "1px solid #0e1a2e",
+              fontSize: 11, alignItems: "start",
+            }}>
+              <div>
+                <div style={{ color: "#cbd5e1" }}>{lang === "en" ? item.nameEn : item.nameEs}</div>
+                {item.partNumber && (
+                  <div style={{ fontSize: 9, color: "#334155", marginTop: 1 }}>#{item.partNumber}</div>
+                )}
+                <div style={{ fontSize: 9, color: "#475569", marginTop: 1 }}>{item.availability}</div>
+              </div>
+              <div style={{ textAlign: "right", color: "#64748b", fontSize: 10, whiteSpace: "nowrap", paddingTop: 2 }}>
+                {item.storeName.split(" ")[0]}
+              </div>
+              <div style={{ textAlign: "right", color: "#94a3b8", fontWeight: 600, whiteSpace: "nowrap", paddingTop: 2 }}>
+                {fmt(item.totalPrice)}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <button
+        className={selected ? "requested full" : "primary full"}
+        onClick={onSelect}
+        style={{ marginTop: "auto" }}
+      >
+        {selected ? <><Check size={15} /> {isEn ? "Selected" : "Seleccionada"}</> : (isEn ? "Select this quote" : "Seleccionar esta cotización")}
+      </button>
+    </article>
+  );
+}
+
+function SendQuoteModal({ quoteData, selectedOption, vehicle, onClose, onSent, lang }) {
+  const isEn = lang === "en";
+  const [form, setForm] = useState({ name: "", email: "", phone: "" });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState(null);
+
+  const selectedQ = selectedOption === "single" ? quoteData?.quotes?.single : quoteData?.quotes?.combo;
+
+  const send = async () => {
+    if (!form.name.trim()) { setError(isEn ? "Enter customer name." : "Ingresa el nombre del cliente."); return; }
+    if (!form.email.trim() && !form.phone.trim()) {
+      setError(isEn ? "Enter an email or phone number." : "Ingresa un correo o número de teléfono."); return;
+    }
+    setError("");
+    setLoading(true);
+    try {
+      const res = await sendItemizedQuote({
+        diagnosis: quoteData.diagnosis,
+        vehicle: vehicle || quoteData.vehicle,
+        quoteCombo: quoteData.quotes.combo,
+        quoteSingle: quoteData.quotes.single,
+        customer: { name: form.name, email: form.email || undefined, phone: form.phone || undefined },
+        language: lang,
+      });
+      setResult(res);
+      onSent?.(res);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop centered" onClick={onClose}>
+      <section className="auth-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 460 }}>
+        <button className="drawer-close" onClick={onClose}><X /></button>
+        <span className="eyebrow dark"><Send size={14} /> {isEn ? "Send Quote to Customer" : "Enviar cotización al cliente"}</span>
+        <h2 style={{ fontSize: 17, marginBottom: 8 }}>
+          {isEn ? "How should we send it?" : "¿Cómo lo enviamos?"}
+        </h2>
+
+        {result ? (
+          <div style={{ textAlign: "center", padding: "12px 0" }}>
+            <div style={{ fontSize: 36, marginBottom: 8 }}>✅</div>
+            <div style={{ color: "#4ade80", fontWeight: 700, fontSize: 15, marginBottom: 6 }}>
+              {isEn ? "Quote sent!" : "¡Cotización enviada!"}
+            </div>
+            <p style={{ fontSize: 12, color: "#64748b", marginBottom: 12 }}>
+              {isEn
+                ? "Share this link with the customer — they can view and approve the quote."
+                : "Comparte este enlace con el cliente para que revise y apruebe la cotización."}
+            </p>
+            <div style={{
+              background: "#0a1020", border: "1px solid #1e2d47", borderRadius: 6,
+              padding: "10px 14px", fontSize: 11, color: "#94a3b8", wordBreak: "break-all",
+              textAlign: "left", marginBottom: 10,
+            }}>
+              {result.trackUrl}
+            </div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+              <button
+                className="primary" style={{ flex: 1 }}
+                onClick={() => navigator.clipboard?.writeText(result.trackUrl)}
+              >
+                {isEn ? "Copy Link" : "Copiar enlace"}
+              </button>
+              <button
+                className="outline" style={{ flex: 1 }}
+                onClick={() => window.open(result.trackUrl, "_blank")}
+              >
+                {isEn ? "Open Tracker" : "Abrir seguimiento"}
+              </button>
+            </div>
+            <button className="outline full" onClick={onClose}>{isEn ? "Close" : "Cerrar"}</button>
+          </div>
+        ) : (
+          <>
+            {selectedQ && (
+              <div style={{
+                background: "rgba(249,115,22,.05)", border: "1px solid rgba(249,115,22,.12)",
+                borderRadius: 8, padding: "10px 14px", marginBottom: 16, fontSize: 12,
+              }}>
+                <div style={{ color: "#f97316", fontWeight: 700 }}>{selectedQ.label}</div>
+                <div style={{ color: "#94a3b8" }}>{isEn ? "Total est." : "Total est."} {fmt(selectedQ.totalLow)}–{fmt(selectedQ.totalHigh)}</div>
+              </div>
+            )}
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {[
+                [isEn ? "Customer name *" : "Nombre del cliente *", "name", "text", isEn ? "Full name" : "Nombre completo"],
+                [isEn ? "Email address" : "Correo electrónico", "email", "email", "cliente@correo.com"],
+                [isEn ? "Mobile phone" : "Teléfono celular", "phone", "tel", "(555) 123-4567"],
+              ].map(([label, key, type, ph]) => (
+                <label key={key} style={{ fontSize: 10, color: "#64748b" }}>
+                  {label}
+                  <input
+                    type={type} value={form[key]} placeholder={ph}
+                    onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
+                    style={{
+                      width: "100%", marginTop: 4, background: "#0a1020", border: "1px solid #1e2d47",
+                      color: "#e2e8f0", padding: "10px 14px", borderRadius: 4, fontSize: 12,
+                      fontFamily: "inherit", outline: "none", display: "block",
+                    }}
+                  />
+                </label>
+              ))}
+            </div>
+            <div style={{ fontSize: 11, color: "#475569", marginTop: 8, display: "flex", gap: 12 }}>
+              {form.email && <span><Mail size={12} style={{ verticalAlign: "middle" }} /> {isEn ? "Will send email" : "Enviará correo"}</span>}
+              {form.phone && <span><Phone size={12} style={{ verticalAlign: "middle" }} /> {isEn ? "Will send SMS" : "Enviará SMS"}</span>}
+            </div>
+            {error && <p className="form-error" style={{ marginTop: 8 }}>{error}</p>}
+            <button
+              className="primary full" style={{ marginTop: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+              onClick={send} disabled={loading}
+            >
+              {loading ? (isEn ? "Sending…" : "Enviando…") : <><Send size={15} /> {isEn ? "Send Quote" : "Enviar cotización"}</>}
+            </button>
+          </>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function TrackPage({ token }) {
+  const { lang } = useLang();
+  const isEn = lang === "en";
+  const stageLabelMap = STAGE_LABELS[isEn ? "en" : "es"];
+  const [quote, setQuote] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [approving, setApproving] = useState(false);
+  const [approved, setApproved] = useState(false);
+
+  useEffect(() => {
+    getTrackingInfo(token)
+      .then(({ quote: q }) => { setQuote(q); setApproved(q.customerApproved); })
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [token]);
+
+  const approve = async () => {
+    setApproving(true);
+    try {
+      const { quote: q } = await approveRepairQuote(token);
+      setQuote(q); setApproved(true);
+    } catch (e) { setError(e.message); }
+    finally { setApproving(false); }
+  };
+
+  const stageIndex = quote ? REPAIR_STAGES.indexOf(quote.repairStage) : -1;
+  const displayedQ = quote?.quoteSingle || quote?.quoteCombo;
+  const veh = quote?.vehicle || {};
+
+  return (
+    <main className="legal-page" style={{ minHeight: "100vh" }}>
+      <section className="legal-card" style={{ maxWidth: 640 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 24 }}>
+          <span style={{
+            background: "#1e3a5f", borderRadius: 8, padding: "6px 10px",
+            color: "#f97316", display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 700,
+          }}>
+            <Wrench size={16} /> RepairScout
+          </span>
+          <span style={{ fontSize: 12, color: "#475569" }}>
+            {isEn ? "Repair Status Tracker" : "Seguimiento de reparación"}
+          </span>
+        </div>
+
+        {loading && (
+          <div style={{ textAlign: "center", padding: "48px 0", color: "#475569" }}>
+            {isEn ? "Loading your quote…" : "Cargando tu cotización…"}
+          </div>
+        )}
+
+        {error && (
+          <div style={{ textAlign: "center", padding: "48px 0" }}>
+            <div style={{ fontSize: 36, marginBottom: 12 }}>🔍</div>
+            <div style={{ color: "#f87171", fontWeight: 600, marginBottom: 8 }}>
+              {isEn ? "Quote not found" : "Cotización no encontrada"}
+            </div>
+            <p style={{ fontSize: 12, color: "#64748b" }}>{error}</p>
+          </div>
+        )}
+
+        {quote && (
+          <>
+            {/* Vehicle header */}
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ fontSize: 11, color: "#f97316", fontWeight: 600, letterSpacing: ".08em", marginBottom: 4 }}>
+                {isEn ? "YOUR VEHICLE" : "TU VEHÍCULO"}
+              </div>
+              <h1 style={{ fontSize: 22, fontWeight: 700, color: "#f1f5f9", margin: 0 }}>
+                {[veh.year, veh.make, veh.model].filter(Boolean).join(" ") || (isEn ? "Your Vehicle" : "Tu vehículo")}
+              </h1>
+              <p style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>
+                {isEn ? "Repair quote for" : "Cotización de reparación para"} <strong style={{ color: "#94a3b8" }}>{quote.customerName}</strong>
+              </p>
+            </div>
+
+            {/* Approval banner */}
+            {!approved && quote.repairStage === "Quote Sent" && (
+              <div style={{
+                background: "rgba(249,115,22,.06)", border: "1px solid rgba(249,115,22,.3)",
+                borderRadius: 10, padding: "16px 20px", marginBottom: 24,
+                display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap",
+              }}>
+                <div>
+                  <div style={{ fontWeight: 700, color: "#f97316", fontSize: 14 }}>
+                    {isEn ? "Ready for your approval" : "Lista para tu aprobación"}
+                  </div>
+                  <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
+                    {isEn ? "Review the quote below and approve to move forward." : "Revisa la cotización y aprueba para continuar."}
+                  </div>
+                </div>
+                <button
+                  className="primary"
+                  onClick={approve}
+                  disabled={approving}
+                  style={{ whiteSpace: "nowrap" }}
+                >
+                  {approving ? "…" : <><Check size={15} /> {isEn ? "Approve Quote" : "Aprobar cotización"}</>}
+                </button>
+              </div>
+            )}
+
+            {approved && (
+              <div style={{
+                background: "rgba(74,222,128,.06)", border: "1px solid rgba(74,222,128,.3)",
+                borderRadius: 10, padding: "14px 18px", marginBottom: 24, textAlign: "center",
+              }}>
+                <Check size={18} style={{ color: "#4ade80", marginBottom: 4 }} />
+                <div style={{ color: "#4ade80", fontWeight: 700, fontSize: 14 }}>
+                  {isEn ? "Quote approved! Your shop will contact you shortly." : "¡Cotización aprobada! Tu taller se pondrá en contacto contigo pronto."}
+                </div>
+              </div>
+            )}
+
+            {/* Status timeline */}
+            <div style={{ marginBottom: 28 }}>
+              <div style={{ fontSize: 11, color: "#64748b", fontWeight: 600, letterSpacing: ".08em", marginBottom: 14 }}>
+                {isEn ? "REPAIR TIMELINE" : "PROGRESO DE REPARACIÓN"}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+                {REPAIR_STAGES.map((stage, idx) => {
+                  const done = idx < stageIndex;
+                  const current = idx === stageIndex;
+                  const future = idx > stageIndex;
+                  return (
+                    <div key={stage} style={{ display: "flex", alignItems: "flex-start", gap: 14, paddingBottom: idx < REPAIR_STAGES.length - 1 ? 0 : 0 }}>
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                        <div style={{
+                          width: 24, height: 24, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+                          background: done ? "#4ade80" : current ? "#f97316" : "#0e1a2e",
+                          border: done ? "none" : current ? "2px solid #f97316" : "1.5px solid #1e2d47",
+                          flexShrink: 0,
+                        }}>
+                          {done ? <Check size={13} color="#0a1020" /> : current ? <span style={{ fontSize: 9, color: "#f97316", fontWeight: 700 }}>●</span> : null}
+                        </div>
+                        {idx < REPAIR_STAGES.length - 1 && (
+                          <div style={{ width: 1, height: 28, background: done ? "#4ade80" : "#1e2d47", margin: "3px 0" }} />
+                        )}
+                      </div>
+                      <div style={{ paddingTop: 3, paddingBottom: 12 }}>
+                        <div style={{
+                          fontSize: 13, fontWeight: current ? 700 : done ? 600 : 400,
+                          color: done ? "#4ade80" : current ? "#f97316" : "#334155",
+                        }}>
+                          {stageLabelMap[stage] || stage}
+                        </div>
+                        {current && (
+                          <div style={{ fontSize: 10, color: "#64748b", marginTop: 2 }}>
+                            {isEn ? "Current status" : "Estado actual"}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Quote details */}
+            {displayedQ && (
+              <div>
+                <div style={{ fontSize: 11, color: "#64748b", fontWeight: 600, letterSpacing: ".08em", marginBottom: 12 }}>
+                  {isEn ? "YOUR QUOTE DETAILS" : "DETALLES DE TU COTIZACIÓN"}
+                </div>
+                <div style={{ background: "#0c1524", border: "1px solid #1e2d47", borderRadius: 8, overflow: "hidden" }}>
+                  <div style={{
+                    display: "grid", gridTemplateColumns: "1fr auto auto",
+                    padding: "8px 14px", background: "#0a1020",
+                    fontSize: 10, color: "#475569", fontWeight: 600, letterSpacing: ".06em",
+                  }}>
+                    <span>{isEn ? "PART / SERVICE" : "PIEZA / SERVICIO"}</span>
+                    <span style={{ textAlign: "right", minWidth: 70 }}>{isEn ? "STORE" : "TIENDA"}</span>
+                    <span style={{ textAlign: "right", minWidth: 70 }}>{isEn ? "PRICE" : "PRECIO"}</span>
+                  </div>
+                  {(displayedQ.lineItems || []).map((item) => (
+                    <div key={item.partKey} style={{
+                      display: "grid", gridTemplateColumns: "1fr auto auto",
+                      padding: "10px 14px", borderTop: "1px solid #0e1a2e",
+                      fontSize: 12,
+                    }}>
+                      <div>
+                        <div style={{ color: "#cbd5e1" }}>{lang === "en" ? item.nameEn : item.nameEs}</div>
+                        <div style={{ fontSize: 10, color: "#475569", marginTop: 1 }}>{item.availability}</div>
+                      </div>
+                      <div style={{ textAlign: "right", color: "#64748b", fontSize: 11, whiteSpace: "nowrap", paddingLeft: 10 }}>
+                        {item.storeName?.split(" ")[0]}
+                      </div>
+                      <div style={{ textAlign: "right", color: "#94a3b8", fontWeight: 600, whiteSpace: "nowrap", paddingLeft: 10 }}>
+                        {fmt(item.totalPrice)}
+                      </div>
+                    </div>
+                  ))}
+                  <div style={{ padding: "12px 14px", borderTop: "2px solid #1e2d47", display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: "#f1f5f9" }}>
+                      {isEn ? "Estimated Total" : "Total estimado"}
+                    </span>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: "#f97316" }}>
+                      {fmt(displayedQ.totalLow)}–{fmt(displayedQ.totalHigh)}
+                    </span>
+                  </div>
+                </div>
+                <p style={{ fontSize: 11, color: "#475569", marginTop: 8 }}>
+                  {isEn
+                    ? "* Final price may vary based on inspection findings. Tax and labor are estimates."
+                    : "* El precio final puede variar según los hallazgos de la inspección. El impuesto y la mano de obra son estimados."}
+                </p>
+              </div>
+            )}
+          </>
+        )}
+      </section>
+    </main>
+  );
+}
+
 /* ── Customer portal ── */
 
 function CustomerPortal({ user, onRequireAuth }) {
@@ -676,6 +1340,11 @@ function CustomerPortal({ user, onRequireAuth }) {
   const [vehicleSaved, setVehicleSaved] = useState(false);
   const [quoteConsent, setQuoteConsent] = useState(false);
   const [partDetail, setPartDetail] = useState(null);
+  const [partsQuote, setPartsQuote] = useState(null);
+  const [partsQuoteLoading, setPartsQuoteLoading] = useState(false);
+  const [partsQuoteError, setPartsQuoteError] = useState("");
+  const [selectedQuoteOption, setSelectedQuoteOption] = useState("combo");
+  const [sendQuoteOpen, setSendQuoteOpen] = useState(false);
 
   const estimatedTotal = useMemo(() => {
     if (diagnosis?.estimate) return { low: diagnosis.estimate.low, high: diagnosis.estimate.high };
@@ -736,6 +1405,16 @@ function CustomerPortal({ user, onRequireAuth }) {
     setError("");
     try { await saveVehicle({ ...vehicle, vin, mileage }); setVehicleSaved(true); }
     catch (e) { setError(e.message); }
+  };
+
+  const loadPartsQuote = async () => {
+    if (!diagnosis) return;
+    setPartsQuoteLoading(true); setPartsQuoteError("");
+    try {
+      const result = await buildPartsQuote({ diagnosis, vehicle, language: lang });
+      setPartsQuote(result);
+    } catch (e) { setPartsQuoteError(e.message); }
+    finally { setPartsQuoteLoading(false); }
   };
 
   const steps = [t("step1"), t("step2"), t("step3"), t("step4")];
@@ -885,8 +1564,65 @@ function CustomerPortal({ user, onRequireAuth }) {
                   : `${t("sourceAI")} ${({ groq: "Groq", gemini: "Google Gemini", openrouter: "OpenRouter", "ai-gateway": "Vercel AI Gateway", openai: "OpenAI" })[diagnosis?.source] || "AI"}`}
               </small>
               <button className="primary full" onClick={() => setStep(2)}>{t("compareBtn")} <ArrowRight size={17} /></button>
+              <button
+                className="outline full"
+                onClick={loadPartsQuote}
+                disabled={partsQuoteLoading}
+                style={{ marginTop: 8, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}
+              >
+                {partsQuoteLoading
+                  ? (isEn ? "Building quote…" : "Generando cotización…")
+                  : <><PackageSearch size={15} /> {isEn ? "Build Itemized Quote" : "Generar cotización detallada"}</>}
+              </button>
+              {partsQuoteError && <p className="form-error" style={{ marginTop: 6, fontSize: 11 }}>{partsQuoteError}</p>}
             </aside>
           </div>
+
+          {/* ── Parts quote options ── */}
+          {partsQuote && (
+            <div style={{ marginTop: 28 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
+                <div>
+                  <div style={{ fontSize: 11, color: "#f97316", fontWeight: 600, letterSpacing: ".08em" }}>
+                    {isEn ? "ITEMIZED PARTS QUOTE" : "COTIZACIÓN DETALLADA DE PIEZAS"}
+                  </div>
+                  <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
+                    {isEn ? "Two options based on local store availability" : "Dos opciones según disponibilidad en tiendas locales"}
+                  </div>
+                </div>
+                {partsQuote.quotes.savings > 0 && (
+                  <div style={{
+                    background: "rgba(74,222,128,.08)", border: "1px solid rgba(74,222,128,.2)",
+                    borderRadius: 20, padding: "5px 14px", fontSize: 11, color: "#4ade80", fontWeight: 600,
+                  }}>
+                    {isEn ? `Save up to ${fmt(partsQuote.quotes.savings)} with combo` : `Ahorra hasta ${fmt(partsQuote.quotes.savings)} con combo`}
+                  </div>
+                )}
+              </div>
+              <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                <QuoteCard
+                  option={partsQuote.quotes.combo}
+                  selected={selectedQuoteOption === "combo"}
+                  onSelect={() => setSelectedQuoteOption("combo")}
+                  lang={lang}
+                />
+                <QuoteCard
+                  option={partsQuote.quotes.single}
+                  selected={selectedQuoteOption === "single"}
+                  onSelect={() => setSelectedQuoteOption("single")}
+                  lang={lang}
+                />
+              </div>
+              <button
+                className="primary"
+                style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 8 }}
+                onClick={() => setSendQuoteOpen(true)}
+              >
+                <Send size={15} />
+                {isEn ? "Send Quote to Shop / Customer" : "Enviar cotización a taller / cliente"}
+              </button>
+            </div>
+          )}
         </section>
       )}
 
@@ -980,17 +1716,216 @@ function CustomerPortal({ user, onRequireAuth }) {
           </section>
         </div>
       )}
+
+      {sendQuoteOpen && partsQuote && (
+        <SendQuoteModal
+          quoteData={partsQuote}
+          selectedOption={selectedQuoteOption}
+          vehicle={vehicle}
+          lang={lang}
+          onClose={() => setSendQuoteOpen(false)}
+          onSent={() => {}}
+        />
+      )}
     </main>
   );
 }
 
 /* ── Shop portal ── */
 
+function SentQuotesPanel({ user }) {
+  const { lang } = useLang();
+  const isEn = lang === "en";
+  const stageLabelMap = STAGE_LABELS[isEn ? "en" : "es"];
+  const [quotes, setQuotes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(null);
+  const [updating, setUpdating] = useState("");
+
+  useEffect(() => {
+    if (!user) { setLoading(false); return; }
+    getSentQuotes()
+      .then(({ quotes: q }) => setQuotes(q || []))
+      .catch(() => setQuotes([]))
+      .finally(() => setLoading(false));
+  }, [user]);
+
+  const advanceStage = async (quoteId, stage) => {
+    setUpdating(`${quoteId}:${stage}`);
+    try {
+      const { quote: updated } = await updateRepairStage(quoteId, stage);
+      setQuotes((qs) => qs.map((q) => q.id === quoteId ? updated : q));
+      setExpanded((prev) => prev?.id === quoteId ? updated : prev);
+    } catch (e) { console.error(e); }
+    finally { setUpdating(""); }
+  };
+
+  const statusColor = (stage) => {
+    const idx = REPAIR_STAGES.indexOf(stage);
+    if (idx >= REPAIR_STAGES.length - 1) return "#4ade80";
+    if (idx >= 3) return "#38bdf8";
+    return "#f97316";
+  };
+
+  return (
+    <section className="panel">
+      <div className="panel-title">
+        <div>
+          <h2>{isEn ? "Sent Quotes" : "Cotizaciones enviadas"}</h2>
+          <p>{isEn ? "Track customer approvals and update repair stages" : "Seguimiento de aprobaciones y estado de reparación"}</p>
+        </div>
+      </div>
+      {loading && <p style={{ color: "#475569", fontSize: 12, padding: "32px 0", textAlign: "center" }}>{isEn ? "Loading…" : "Cargando…"}</p>}
+      {!loading && quotes.length === 0 && (
+        <div style={{ textAlign: "center", padding: "48px 0", color: "#334155" }}>
+          <Send size={32} style={{ opacity: .3, marginBottom: 12 }} />
+          <div style={{ fontSize: 13 }}>{isEn ? "No quotes sent yet" : "Aún no has enviado cotizaciones"}</div>
+          <div style={{ fontSize: 11, marginTop: 4, color: "#1e2d47" }}>
+            {isEn ? 'Use "Build & Send Quote" from a request drawer.' : 'Usa "Generar y enviar cotización" desde el cajón de solicitudes.'}
+          </div>
+        </div>
+      )}
+      {quotes.map((q) => {
+        const isOpen = expanded?.id === q.id;
+        const veh = q.vehicle || {};
+        const displayQ = q.quoteSingle || q.quoteCombo;
+        const stageIdx = REPAIR_STAGES.indexOf(q.repairStage);
+        return (
+          <article key={q.id} style={{
+            border: "1px solid #1e2d47", borderRadius: 10, marginBottom: 12,
+            background: "#0c1524", overflow: "hidden",
+          }}>
+            <button
+              onClick={() => setExpanded(isOpen ? null : q)}
+              style={{
+                width: "100%", background: "transparent", border: "none", cursor: "pointer",
+                display: "flex", alignItems: "center", gap: 14, padding: "14px 18px", textAlign: "left",
+              }}
+            >
+              <span className="request-avatar">{q.customerName?.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase()}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: 13, color: "#f1f5f9" }}>{q.customerName}</div>
+                <div style={{ fontSize: 11, color: "#64748b" }}>
+                  {[veh.year, veh.make, veh.model].filter(Boolean).join(" ") || "—"}
+                </div>
+              </div>
+              <div style={{ textAlign: "right", flexShrink: 0 }}>
+                <span style={{
+                  fontSize: 10, padding: "3px 8px", borderRadius: 20,
+                  border: `1px solid ${statusColor(q.repairStage)}44`,
+                  background: `${statusColor(q.repairStage)}11`,
+                  color: statusColor(q.repairStage),
+                }}>
+                  {stageLabelMap[q.repairStage] || q.repairStage}
+                </span>
+                {displayQ && (
+                  <div style={{ fontSize: 12, color: "#f97316", fontWeight: 700, marginTop: 4 }}>
+                    {fmt(displayQ.totalLow)}–{fmt(displayQ.totalHigh)}
+                  </div>
+                )}
+              </div>
+              <ChevronDown size={15} color="#334155" style={{ transform: isOpen ? "rotate(180deg)" : "", transition: ".2s", flexShrink: 0 }} />
+            </button>
+
+            {isOpen && (
+              <div style={{ padding: "0 18px 18px", borderTop: "1px solid #0e1a2e" }}>
+                {/* Contact info */}
+                <div style={{ display: "flex", gap: 16, margin: "14px 0 16px", fontSize: 11 }}>
+                  {q.customerEmail && <span style={{ color: "#64748b" }}><Mail size={12} style={{ verticalAlign: "middle" }} /> {q.customerEmail}</span>}
+                  {q.customerPhone && <span style={{ color: "#64748b" }}><Phone size={12} style={{ verticalAlign: "middle" }} /> {q.customerPhone}</span>}
+                  {q.customerApproved && (
+                    <span style={{ color: "#4ade80", fontWeight: 600 }}><Check size={12} style={{ verticalAlign: "middle" }} /> {isEn ? "Approved" : "Aprobada"}</span>
+                  )}
+                </div>
+
+                {/* Repair stage management */}
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, letterSpacing: ".08em", marginBottom: 10 }}>
+                    {isEn ? "UPDATE REPAIR STAGE" : "ACTUALIZAR ETAPA DE REPARACIÓN"}
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {REPAIR_STAGES.map((stage, idx) => {
+                      const isCurrent = q.repairStage === stage;
+                      const isDone = REPAIR_STAGES.indexOf(q.repairStage) > idx;
+                      const busy = updating === `${q.id}:${stage}`;
+                      return (
+                        <button
+                          key={stage}
+                          onClick={() => advanceStage(q.id, stage)}
+                          disabled={isCurrent || busy}
+                          style={{
+                            fontSize: 10, padding: "5px 10px", borderRadius: 6, cursor: isCurrent ? "default" : "pointer",
+                            border: isCurrent ? `1px solid ${statusColor(stage)}` : isDone ? "1px solid #334155" : "1px solid #1e2d47",
+                            background: isCurrent ? `${statusColor(stage)}18` : "transparent",
+                            color: isCurrent ? statusColor(stage) : isDone ? "#475569" : "#64748b",
+                            fontFamily: "inherit",
+                          }}
+                        >
+                          {busy ? "…" : (isDone ? <><Check size={10} style={{ verticalAlign: "middle" }} /> </> : "")}{stageLabelMap[stage] || stage}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Parts list preview */}
+                {displayQ?.lineItems?.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, letterSpacing: ".08em", marginBottom: 8 }}>
+                      {isEn ? "QUOTED PARTS" : "PIEZAS COTIZADAS"}
+                    </div>
+                    <div style={{ background: "#0a1020", border: "1px solid #0e1a2e", borderRadius: 6, overflow: "hidden" }}>
+                      {displayQ.lineItems.map((item) => (
+                        <div key={item.partKey} style={{
+                          display: "flex", justifyContent: "space-between", alignItems: "center",
+                          padding: "7px 12px", borderBottom: "1px solid #0e1a2e", fontSize: 11,
+                        }}>
+                          <span style={{ color: "#94a3b8" }}>{isEn ? item.nameEn : item.nameEs}</span>
+                          <span style={{ color: "#f97316", fontWeight: 600 }}>{fmt(item.totalPrice)}</span>
+                        </div>
+                      ))}
+                      <div style={{ display: "flex", justifyContent: "space-between", padding: "9px 12px", fontSize: 12, fontWeight: 700 }}>
+                        <span style={{ color: "#f1f5f9" }}>{isEn ? "Total (est.)" : "Total (est.)"}</span>
+                        <span style={{ color: "#f97316" }}>{fmt(displayQ.totalLow)}–{fmt(displayQ.totalHigh)}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Tracking link */}
+                <div style={{ marginTop: 14, display: "flex", gap: 8 }}>
+                  <button
+                    className="outline"
+                    style={{ fontSize: 11, flex: 1 }}
+                    onClick={() => navigator.clipboard?.writeText(`${window.location.origin}/track/${q.token}`)}
+                  >
+                    {isEn ? "Copy Track Link" : "Copiar enlace de seguimiento"}
+                  </button>
+                  <button
+                    className="outline"
+                    style={{ fontSize: 11, flex: 1 }}
+                    onClick={() => window.open(`/track/${q.token}`, "_blank")}
+                  >
+                    {isEn ? "View as Customer" : "Ver como cliente"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </article>
+        );
+      })}
+    </section>
+  );
+}
+
 function Sidebar({ active, setActive, shopProfile }) {
   const t = useT();
+  const { lang } = useLang();
+  const isEn = lang === "en";
   const links = [
     [t("tabResumen"), LayoutDashboard],
     [t("tabSolicitudes"), MessageSquareText],
+    [isEn ? "Sent Quotes" : "Cotizaciones", Send],
     [t("tabCitas"), Calendar],
     [t("tabOrdenes"), Wrench],
     [t("tabClientes"), Users],
@@ -1077,6 +2012,9 @@ function ShopPortal({ user, onRequireAuth }) {
   const [bookingOpen, setBookingOpen] = useState(false);
   const [messageOpen, setMessageOpen] = useState(false);
   const [messageTarget, setMessageTarget] = useState(null);
+  const [shopSendQuoteOpen, setShopSendQuoteOpen] = useState(false);
+  const [shopQuoteData, setShopQuoteData] = useState(null);
+  const [shopQuoteBuilding, setShopQuoteBuilding] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -1124,6 +2062,28 @@ function ShopPortal({ user, onRequireAuth }) {
   }, [savedRequests, demoQR, lang]);
 
   const openMessage = (request) => { setMessageTarget(request); setMessageOpen(true); setSelectedRequest(null); };
+
+  const buildShopQuote = async (req) => {
+    setShopQuoteBuilding(true);
+    setShopQuoteData(null);
+    try {
+      const vehicleParts = (req.vehicle || "").split(" ");
+      const veh = { year: vehicleParts[0], make: vehicleParts[1], model: vehicleParts.slice(2).join(" ") };
+      const mockDiagnosis = {
+        summary: req.issue,
+        possibleCauses: [{ title: req.issue, reason: "", test: "", probability: 80, urgency: "Verify" }],
+        estimate: { laborHoursLow: 1.5, laborHoursHigh: 3 },
+      };
+      const result = await buildPartsQuote({ diagnosis: mockDiagnosis, vehicle: veh, language: lang });
+      setShopQuoteData(result);
+      setShopSendQuoteOpen(true);
+      setSelectedRequest(null);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setShopQuoteBuilding(false);
+    }
+  };
 
   return (
     <main className="shop-shell">
@@ -1237,6 +2197,10 @@ function ShopPortal({ user, onRequireAuth }) {
             <RequestsFullPanel requests={visibleRequests} onSelect={setSelectedRequest} />
           )}
 
+          {(active === (lang === "en" ? "Sent Quotes" : "Cotizaciones")) && (
+            <SentQuotesPanel user={user} />
+          )}
+
           {active === t("tabCitas") && (
             <AppointmentsPanel onBook={() => setBookingOpen(true)} />
           )}
@@ -1279,7 +2243,17 @@ function ShopPortal({ user, onRequireAuth }) {
                 ))}
               </div>
             )}
-            <button className="primary full" onClick={() => { setSelectedRequest(null); setActive(t("tabScout")); }}>
+            <button
+              className="primary full"
+              onClick={() => buildShopQuote(selectedRequest)}
+              disabled={shopQuoteBuilding}
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+            >
+              {shopQuoteBuilding
+                ? (lang === "en" ? "Building quote…" : "Generando cotización…")
+                : <><PackageSearch size={15} /> {lang === "en" ? "Build & Send Quote" : "Generar y enviar cotización"}</>}
+            </button>
+            <button className="outline full" onClick={() => { setSelectedRequest(null); setActive(t("tabScout")); }}>
               {t("openDiagBtn")} <ArrowRight size={17} />
             </button>
             <button className="outline full" onClick={() => openMessage(selectedRequest)}>
@@ -1291,6 +2265,16 @@ function ShopPortal({ user, onRequireAuth }) {
 
       {bookingOpen && <BookingModal onClose={() => setBookingOpen(false)} />}
       {messageOpen && <MessageModal request={messageTarget} onClose={() => { setMessageOpen(false); setMessageTarget(null); }} />}
+      {shopSendQuoteOpen && shopQuoteData && (
+        <SendQuoteModal
+          quoteData={shopQuoteData}
+          selectedOption="combo"
+          vehicle={shopQuoteData.vehicle}
+          lang={lang}
+          onClose={() => { setShopSendQuoteOpen(false); setShopQuoteData(null); }}
+          onSent={() => {}}
+        />
+      )}
     </main>
   );
 }
@@ -1373,6 +2357,12 @@ export default function App() {
   const [authOpen, setAuthOpen] = useState(false);
   const [lang, setLang] = useState("es");
 
+  // Detect tracking token in URL path: /track/:token
+  const [trackToken] = useState(() => {
+    const match = window.location.pathname.match(/^\/track\/([a-f0-9]{20,})$/i);
+    return match ? match[1] : null;
+  });
+
   useEffect(() => {
     if (!window.localStorage.getItem("repairscout_token")) return;
     getCurrentUser()
@@ -1384,15 +2374,37 @@ export default function App() {
 
   return (
     <LangCtx.Provider value={{ lang, setLang }}>
-      {(portal === "customer" || page !== "home") && <TopBar portal={portal} setPortal={setPortal} page={page} setPage={setPage} user={user} onAuth={() => setAuthOpen(true)} onLogout={logout} />}
-      {page === "home"
-        ? portal === "customer"
-          ? <CustomerPortal user={user} onRequireAuth={() => setAuthOpen(true)} />
-          : <ShopPortal user={user} onRequireAuth={() => setAuthOpen(true)} />
-        : <LegalPage page={page} setPage={setPage} />
-      }
-      {(portal === "customer" || page !== "home") && <Footer setPage={setPage} />}
-      {authOpen && <AuthModal onClose={() => setAuthOpen(false)} onAuthenticated={setUser} />}
+      {trackToken ? (
+        <>
+          <header className="topbar" style={{ justifyContent: "space-between" }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ color: "#f97316" }}><Wrench size={18} strokeWidth={2.5} /></span>
+              <span style={{ fontWeight: 700, color: "#f1f5f9" }}>RepairScout</span>
+            </span>
+            <button
+              onClick={() => setLang(lang === "es" ? "en" : "es")}
+              style={{
+                fontSize: 11, fontWeight: 700, padding: "5px 11px",
+                borderRadius: 6, border: "1px solid #1e2d47", background: "transparent",
+                color: "#94a3b8", cursor: "pointer", fontFamily: "inherit",
+              }}
+            >{lang === "es" ? "EN" : "ES"}</button>
+          </header>
+          <TrackPage token={trackToken} />
+        </>
+      ) : (
+        <>
+          {(portal === "customer" || page !== "home") && <TopBar portal={portal} setPortal={setPortal} page={page} setPage={setPage} user={user} onAuth={() => setAuthOpen(true)} onLogout={logout} />}
+          {page === "home"
+            ? portal === "customer"
+              ? <CustomerPortal user={user} onRequireAuth={() => setAuthOpen(true)} />
+              : <ShopPortal user={user} onRequireAuth={() => setAuthOpen(true)} />
+            : <LegalPage page={page} setPage={setPage} />
+          }
+          {(portal === "customer" || page !== "home") && <Footer setPage={setPage} />}
+          {authOpen && <AuthModal onClose={() => setAuthOpen(false)} onAuthenticated={setUser} />}
+        </>
+      )}
     </LangCtx.Provider>
   );
 }

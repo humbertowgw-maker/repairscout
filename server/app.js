@@ -7,19 +7,26 @@ import express from "express";
 import { z } from "zod";
 import { authConfigured, createToken, hashPassword, optionalAuth, requireAuth, verifyPassword } from "./auth.js";
 import {
+  approveQuoteByToken,
+  createItemizedQuote,
   createQuoteRequest,
   createUser,
   createVehicle,
   databaseMode,
   findUserByEmail,
+  getItemizedQuoteByToken,
   getShopProfile,
   listQuoteRequests,
+  listSentQuotes,
   listVehicles,
   saveDiagnosis,
   updateQuoteRequestStatus,
+  updateRepairStage,
   upsertShopProfile,
 } from "./database.js";
 import { diagnoseVehicle, getDiagnosisProviderStatus } from "./diagnosis.js";
+import { buildQuoteFromDiagnosis } from "./parts.js";
+import { sendQuoteNotification } from "./notify.js";
 import { searchRepairShops } from "./shops.js";
 
 const app = express();
@@ -204,6 +211,7 @@ const diagnosisInput = z.object({
   description: z.string().min(8).max(2000),
   obdCodes: z.array(z.string()).max(10).optional(),
   zip: z.string().min(5).max(10),
+  language: z.string().max(5).optional(),
 });
 
 app.post("/api/diagnose", async (request, response) => {
@@ -353,8 +361,147 @@ app.patch("/api/quote-requests/:id/status", requireAuth, async (request, respons
   response.json({ quoteRequest: updated });
 });
 
+// ── Itemized quotes: list (shop) ───────────────────────────────────────────
+
+app.get("/api/quotes/sent", requireAuth, async (request, response) => {
+  const quotes = await listSentQuotes(request.user.id).catch(() => []);
+  response.json({ quotes });
+});
+
+// ── Itemized quotes: build ─────────────────────────────────────────────────
+
+const quoteBuildInput = z.object({
+  diagnosis: z.record(z.string(), z.any()),
+  vehicle: z.record(z.string(), z.any()).optional(),
+  language: z.string().max(5).optional(),
+});
+
+app.post("/api/quotes/build", async (request, response) => {
+  const parsed = quoteBuildInput.safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: "Faltan datos de diagnóstico." });
+  try {
+    const result = await buildQuoteFromDiagnosis({
+      diagnosis: parsed.data.diagnosis,
+      vehicle: parsed.data.vehicle || {},
+      language: parsed.data.language || "es",
+    });
+    return response.json(result);
+  } catch (e) {
+    console.error("Quote build error:", e);
+    return response.status(502).json({ error: "No se pudo generar la cotización." });
+  }
+});
+
+// ── Itemized quotes: send ──────────────────────────────────────────────────
+
+const quoteSendInput = z.object({
+  diagnosis: z.record(z.string(), z.any()),
+  vehicle: z.record(z.string(), z.any()).optional(),
+  quoteCombo: z.record(z.string(), z.any()).optional(),
+  quoteSingle: z.record(z.string(), z.any()).optional(),
+  customer: z.object({
+    name: z.string().min(1).max(120),
+    email: z.string().email().optional().or(z.literal("")),
+    phone: z.string().max(30).optional().or(z.literal("")),
+  }),
+  quoteRequestId: z.string().uuid().optional(),
+  language: z.string().max(5).optional(),
+});
+
+app.post("/api/quotes/send", async (request, response) => {
+  const parsed = quoteSendInput.safeParse(request.body);
+  if (!parsed.success) {
+    return response.status(400).json({ error: "Faltan datos para enviar la cotización." });
+  }
+  if (!parsed.data.customer.email && !parsed.data.customer.phone) {
+    return response.status(400).json({ error: "Proporciona un correo o teléfono del cliente." });
+  }
+  const { diagnosis, vehicle, quoteCombo, quoteSingle, customer, quoteRequestId, language } = parsed.data;
+
+  // Build the quote if not provided
+  let combo = quoteCombo;
+  let single = quoteSingle;
+  if (!combo || !single) {
+    const built = await buildQuoteFromDiagnosis({ diagnosis, vehicle: vehicle || {}, language: language || "es" });
+    combo = built.quotes.combo;
+    single = built.quotes.single;
+  }
+
+  const id = crypto.randomUUID();
+  const token = crypto.randomBytes(20).toString("hex");
+  const now = new Date().toISOString();
+
+  const quote = await createItemizedQuote({
+    id,
+    token,
+    quoteRequestId: quoteRequestId || null,
+    userId: request.user?.id || null,
+    customerName: customer.name,
+    customerEmail: customer.email || null,
+    customerPhone: customer.phone || null,
+    vehicle: vehicle || {},
+    diagnosis,
+    quoteCombo: combo,
+    quoteSingle: single,
+    repairStage: "Quote Sent",
+    sentAt: now,
+    createdAt: now,
+  });
+
+  const notifyResult = await sendQuoteNotification({
+    quote: { combo, single },
+    customer,
+    quoteId: id,
+    token,
+    language: language || "es",
+  }).catch((e) => ({ error: e.message }));
+
+  return response.status(201).json({
+    quoteId: id,
+    token,
+    trackUrl: `${process.env.APP_URL || "http://localhost:4311"}/track/${token}`,
+    notifyResult,
+  });
+});
+
+// ── Itemized quotes: track (customer facing) ───────────────────────────────
+
+app.get("/api/track/:token", async (request, response) => {
+  const token = request.params.token?.trim();
+  if (!token || token.length < 10) return response.status(400).json({ error: "Token inválido." });
+  const quote = await getItemizedQuoteByToken(token).catch(() => null);
+  if (!quote) return response.status(404).json({ error: "No encontramos esa cotización." });
+  response.json({ quote });
+});
+
+app.post("/api/track/:token/approve", async (request, response) => {
+  const token = request.params.token?.trim();
+  if (!token) return response.status(400).json({ error: "Token inválido." });
+  const updated = await approveQuoteByToken(token).catch(() => null);
+  if (!updated) return response.status(404).json({ error: "No encontramos esa cotización." });
+  response.json({ quote: updated });
+});
+
+// ── Repair stage update (shop only) ───────────────────────────────────────
+
+const repairStageInput = z.object({
+  stage: z.enum(["Quote Sent", "Approved", "Parts Ordered", "In Progress", "Ready for Pickup", "Completed"]),
+});
+
+app.patch("/api/quotes/:id/repair-stage", requireAuth, async (request, response) => {
+  if (request.user.role !== "shop") {
+    return response.status(403).json({ error: "Solo el taller puede actualizar el estado de la reparación." });
+  }
+  const parsed = repairStageInput.safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: "Estado de reparación no válido." });
+  const updated = await updateRepairStage({ id: request.params.id, stage: parsed.data.stage });
+  if (!updated) return response.status(404).json({ error: "No encontramos esa cotización." });
+  response.json({ quote: updated });
+});
+
 if (process.env.VERCEL !== "1") {
   app.use(express.static(path.join(projectDir, "dist")));
+  // SPA fallback — also handles /track/:token routes
   app.get("*", (request, response, next) => {
     if (request.path.startsWith("/api/")) return next();
     response.sendFile(path.join(projectDir, "dist", "index.html"));

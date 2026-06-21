@@ -99,7 +99,7 @@ export function getDiagnosisProviderStatus() {
   };
 }
 
-function extractJson(text) {
+function extractJson(text, language = "es") {
   const raw = String(text || "").trim();
   const start = raw.indexOf("{");
   const end = raw.lastIndexOf("}");
@@ -117,16 +117,17 @@ function extractJson(text) {
   const confidences = ["Baja", "Media", "Alta"];
   const causes = Array.isArray(parsed.possibleCauses) ? parsed.possibleCauses : [];
   const estimate = parsed.estimate || {};
+  const isEn = language === "en";
   const normalized = {
-    summary: String(parsed.summary || "Se requiere una inspección profesional para confirmar la causa."),
+    summary: String(parsed.summary || (isEn ? "A professional inspection is required to confirm the cause." : "Se requiere una inspección profesional para confirmar la causa.")),
     safetyLevel: safetyLevels.includes(parsed.safetyLevel) ? parsed.safetyLevel : "moderado",
-    safetyMessage: String(parsed.safetyMessage || "Detén el vehículo si el síntoma empeora o afecta la conducción segura."),
+    safetyMessage: String(parsed.safetyMessage || (isEn ? "Stop driving if the symptom worsens or affects safe operation." : "Detén el vehículo si el síntoma empeora o afecta la conducción segura.")),
     possibleCauses: causes.slice(0, 4).map((cause) => ({
       probability: Math.min(99, Math.max(1, Math.round(number(cause?.probability, 25)))),
-      title: String(cause?.title || "Causa posible"),
-      reason: String(cause?.reason || "Debe verificarse con una inspección física."),
-      test: String(cause?.test || "Realizar inspección y pruebas del sistema relacionado."),
-      urgency: String(cause?.urgency || "Verificar"),
+      title: String(cause?.title || (isEn ? "Possible cause" : "Causa posible")),
+      reason: String(cause?.reason || (isEn ? "Must be verified with a physical inspection." : "Debe verificarse con una inspección física.")),
+      test: String(cause?.test || (isEn ? "Inspect and test the related system." : "Realizar inspección y pruebas del sistema relacionado.")),
+      urgency: String(cause?.urgency || (isEn ? "Verify" : "Verificar")),
       tone: tones.includes(cause?.tone) ? cause.tone : "neutral",
     })),
     estimate: {
@@ -139,7 +140,7 @@ function extractJson(text) {
       laborHoursLow: number(estimate.laborHoursLow),
       laborHoursHigh: number(estimate.laborHoursHigh),
       confidence: confidences.includes(estimate.confidence) ? estimate.confidence : "Baja",
-      repairLabel: String(estimate.repairLabel || "Diagnóstico e inspección inicial"),
+      repairLabel: String(estimate.repairLabel || (isEn ? "Diagnosis and initial inspection" : "Diagnóstico e inspección inicial")),
     },
     questions: (Array.isArray(parsed.questions) ? parsed.questions : [])
       .slice(0, 4)
@@ -149,10 +150,10 @@ function extractJson(text) {
   if (!normalized.possibleCauses.length) {
     normalized.possibleCauses.push({
       probability: 25,
-      title: "Causa pendiente de confirmación",
-      reason: "La respuesta requiere una inspección para identificar el componente exacto.",
-      test: "Realizar inspección visual, escaneo OBD-II y pruebas del sistema relacionado.",
-      urgency: "Diagnosticar",
+      title: isEn ? "Cause pending confirmation" : "Causa pendiente de confirmación",
+      reason: isEn ? "The response requires an inspection to identify the exact component." : "La respuesta requiere una inspección para identificar el componente exacto.",
+      test: isEn ? "Perform visual inspection, OBD-II scan, and tests on the related system." : "Realizar inspección visual, escaneo OBD-II y pruebas del sistema relacionado.",
+      urgency: isEn ? "Diagnose" : "Diagnosticar",
       tone: "warn",
     });
   }
@@ -181,7 +182,7 @@ async function requestJson(url, options, provider) {
 
 function jsonInstruction(systemPrompt) {
   return `${systemPrompt}
-Devuelve solamente JSON válido, sin Markdown. Usa exactamente esta estructura:
+Return only valid JSON, no Markdown. Use exactly this structure:
 {
   "summary": "string",
   "safetyLevel": "bajo|moderado|alto|crítico",
@@ -189,7 +190,10 @@ Devuelve solamente JSON válido, sin Markdown. Usa exactamente esta estructura:
   "possibleCauses": [{"probability": 1, "title": "string", "reason": "string", "test": "string", "urgency": "string", "tone": "danger|warn|neutral"}],
   "estimate": {"low": 0, "high": 0, "partsLow": 0, "partsHigh": 0, "laborLow": 0, "laborHigh": 0, "laborHoursLow": 0, "laborHoursHigh": 0, "confidence": "Baja|Media|Alta", "repairLabel": "string"},
   "questions": ["string"]
-}`;
+}
+IMPORTANT: safetyLevel must always be one of: bajo, moderado, alto, crítico (these are fixed codes, not translated).
+IMPORTANT: confidence must always be one of: Baja, Media, Alta (fixed codes, not translated).
+All other text fields must be written in the language specified in the system prompt.`;
 }
 
 async function diagnoseWithOpenAiCompatible({
@@ -199,6 +203,7 @@ async function diagnoseWithOpenAiCompatible({
   systemPrompt,
   userPrompt,
   provider,
+  language = "es",
   headers = {},
 }) {
   const payload = await requestJson(url, {
@@ -220,10 +225,10 @@ async function diagnoseWithOpenAiCompatible({
     }),
   }, provider);
 
-  return extractJson(payload?.choices?.[0]?.message?.content);
+  return extractJson(payload?.choices?.[0]?.message?.content, language);
 }
 
-async function diagnoseWithGroq(systemPrompt, userPrompt) {
+async function diagnoseWithGroq(systemPrompt, userPrompt, language) {
   return diagnoseWithOpenAiCompatible({
     apiKey: process.env.GROQ_API_KEY,
     model: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
@@ -231,10 +236,11 @@ async function diagnoseWithGroq(systemPrompt, userPrompt) {
     systemPrompt,
     userPrompt,
     provider: "Groq",
+    language,
   });
 }
 
-async function diagnoseWithOpenRouter(systemPrompt, userPrompt) {
+async function diagnoseWithOpenRouter(systemPrompt, userPrompt, language) {
   return diagnoseWithOpenAiCompatible({
     apiKey: process.env.OPENROUTER_API_KEY,
     model: process.env.OPENROUTER_MODEL || "openrouter/free",
@@ -242,6 +248,7 @@ async function diagnoseWithOpenRouter(systemPrompt, userPrompt) {
     systemPrompt,
     userPrompt,
     provider: "OpenRouter",
+    language,
     headers: {
       "HTTP-Referer": process.env.APP_URL || "https://repairscout-smoky.vercel.app",
       "X-Title": "RepairScout",
@@ -249,7 +256,7 @@ async function diagnoseWithOpenRouter(systemPrompt, userPrompt) {
   });
 }
 
-async function diagnoseWithGemini(systemPrompt, userPrompt) {
+async function diagnoseWithGemini(systemPrompt, userPrompt, language) {
   const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
   const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
   const payload = await requestJson(
@@ -278,7 +285,7 @@ async function diagnoseWithGemini(systemPrompt, userPrompt) {
     "Gemini",
   );
 
-  return extractJson(payload?.candidates?.[0]?.content?.parts?.[0]?.text);
+  return extractJson(payload?.candidates?.[0]?.content?.parts?.[0]?.text, language);
 }
 
 async function diagnoseWithGateway(systemPrompt, userPrompt) {
@@ -317,147 +324,160 @@ async function diagnoseWithOpenAI(systemPrompt, userPrompt) {
   return response.output_parsed;
 }
 
-function fallbackDiagnosis(description) {
+function fallbackDiagnosis(description, language = "es") {
   const normalized = description.toLowerCase();
   const brakeConcern = /(fren|brake|rechin|grind)/.test(normalized);
   const startingConcern = /(no enciende|no arranca|won't start|bater)/.test(normalized);
+  const en = language === "en";
 
   if (startingConcern) {
     return {
-      summary: "El problema parece estar relacionado con el sistema de arranque o la alimentación eléctrica.",
+      summary: en
+        ? "The issue appears related to the starting system or electrical power supply."
+        : "El problema parece estar relacionado con el sistema de arranque o la alimentación eléctrica.",
       safetyLevel: "moderado",
-      safetyMessage: "No intentes arrancar repetidamente si notas olor a quemado, humo o cables calientes.",
+      safetyMessage: en
+        ? "Do not attempt to start the vehicle repeatedly if you notice burning smells, smoke, or hot wires."
+        : "No intentes arrancar repetidamente si notas olor a quemado, humo o cables calientes.",
       possibleCauses: [
         {
           probability: 72,
-          title: "Batería descargada o deteriorada",
-          reason: "Una batería con bajo voltaje es una de las causas más comunes cuando el motor no arranca.",
-          test: "Medir el voltaje en reposo y durante el intento de arranque.",
-          urgency: "Revisar primero",
+          title: en ? "Weak or failed battery" : "Batería descargada o deteriorada",
+          reason: en ? "A battery with low voltage is one of the most common causes when the engine won't start." : "Una batería con bajo voltaje es una de las causas más comunes cuando el motor no arranca.",
+          test: en ? "Measure resting voltage and voltage during the start attempt." : "Medir el voltaje en reposo y durante el intento de arranque.",
+          urgency: en ? "Check first" : "Revisar primero",
           tone: "warn",
         },
         {
           probability: 38,
-          title: "Conexión eléctrica deficiente",
-          reason: "Terminales flojos o corroídos pueden impedir que llegue suficiente corriente al motor de arranque.",
-          test: "Inspeccionar terminales, tierras y caída de voltaje en los cables.",
-          urgency: "Verificar",
+          title: en ? "Poor electrical connection" : "Conexión eléctrica deficiente",
+          reason: en ? "Loose or corroded terminals can prevent enough current from reaching the starter motor." : "Terminales flojos o corroídos pueden impedir que llegue suficiente corriente al motor de arranque.",
+          test: en ? "Inspect terminals, grounds, and voltage drop across cables." : "Inspeccionar terminales, tierras y caída de voltaje en los cables.",
+          urgency: en ? "Verify" : "Verificar",
           tone: "neutral",
         },
       ],
       estimate: {
-        low: 120,
-        high: 480,
-        partsLow: 80,
-        partsHigh: 310,
-        laborLow: 40,
-        laborHigh: 170,
-        laborHoursLow: 0.5,
-        laborHoursHigh: 1.5,
+        low: 120, high: 480, partsLow: 80, partsHigh: 310,
+        laborLow: 40, laborHigh: 170, laborHoursLow: 0.5, laborHoursHigh: 1.5,
         confidence: "Media",
-        repairLabel: "Diagnóstico del sistema de arranque y posible reemplazo de batería",
+        repairLabel: en ? "Starting system diagnosis and possible battery replacement" : "Diagnóstico del sistema de arranque y posible reemplazo de batería",
       },
-      questions: ["¿Las luces del tablero encienden?", "¿Escuchas un clic al girar la llave?"],
+      questions: en
+        ? ["Do the dashboard lights come on?", "Do you hear a click when turning the key?"]
+        : ["¿Las luces del tablero encienden?", "¿Escuchas un clic al girar la llave?"],
     };
   }
 
   if (brakeConcern) {
     return {
-      summary: "Los síntomas apuntan primero al sistema de frenos delantero.",
+      summary: en
+        ? "Symptoms point first to the front brake system."
+        : "Los síntomas apuntan primero al sistema de frenos delantero.",
       safetyLevel: "alto",
-      safetyMessage: "Limita el uso del vehículo hasta que los frenos sean inspeccionados.",
+      safetyMessage: en
+        ? "Limit vehicle use until the brakes have been inspected."
+        : "Limita el uso del vehículo hasta que los frenos sean inspeccionados.",
       possibleCauses: [
         {
           probability: 78,
-          title: "Pastillas de freno delanteras desgastadas",
-          reason: "El rechinido al frenar suele aparecer cuando queda muy poco material de fricción.",
-          test: "Inspeccionar el grosor de las pastillas y la superficie de los rotores.",
-          urgency: "No lo pospongas",
+          title: en ? "Worn front brake pads" : "Pastillas de freno delanteras desgastadas",
+          reason: en ? "Squealing when braking usually appears when very little friction material remains." : "El rechinido al frenar suele aparecer cuando queda muy poco material de fricción.",
+          test: en ? "Inspect pad thickness and rotor surface condition." : "Inspeccionar el grosor de las pastillas y la superficie de los rotores.",
+          urgency: en ? "Don't delay" : "No lo pospongas",
           tone: "danger",
         },
         {
           probability: 54,
-          title: "Rotores delanteros rayados",
-          reason: "El contacto de metal con metal puede producir surcos, ruido y vibración.",
-          test: "Medir el grosor y la desviación lateral de los rotores.",
-          urgency: "Inspeccionar hoy",
+          title: en ? "Scored front rotors" : "Rotores delanteros rayados",
+          reason: en ? "Metal-to-metal contact can create grooves, noise, and vibration." : "El contacto de metal con metal puede producir surcos, ruido y vibración.",
+          test: en ? "Measure rotor thickness and lateral runout." : "Medir el grosor y la desviación lateral de los rotores.",
+          urgency: en ? "Inspect today" : "Inspeccionar hoy",
           tone: "warn",
         },
         {
           probability: 21,
-          title: "Rodamiento de rueda desgastado",
-          reason: "Un rodamiento dañado puede producir un rechinido que cambia con la velocidad.",
-          test: "Elevar el vehículo y revisar juego y ruido en la rueda.",
-          urgency: "Descartar",
+          title: en ? "Worn wheel bearing" : "Rodamiento de rueda desgastado",
+          reason: en ? "A damaged bearing can produce a squeal that changes with vehicle speed." : "Un rodamiento dañado puede producir un rechinido que cambia con la velocidad.",
+          test: en ? "Lift the vehicle and check for wheel play and bearing noise." : "Elevar el vehículo y revisar juego y ruido en la rueda.",
+          urgency: en ? "Rule out" : "Descartar",
           tone: "neutral",
         },
       ],
       estimate: {
-        low: 230,
-        high: 540,
-        partsLow: 40,
-        partsHigh: 220,
-        laborLow: 174,
-        laborHigh: 261,
-        laborHoursLow: 1.2,
-        laborHoursHigh: 1.8,
+        low: 230, high: 540, partsLow: 40, partsHigh: 220,
+        laborLow: 174, laborHigh: 261, laborHoursLow: 1.2, laborHoursHigh: 1.8,
         confidence: "Alta",
-        repairLabel: "Inspección y posible reemplazo de frenos delanteros",
+        repairLabel: en ? "Front brake inspection and possible replacement" : "Inspección y posible reemplazo de frenos delanteros",
       },
-      questions: ["¿Sientes vibración en el pedal?", "¿El ruido ocurre solamente al frenar?"],
+      questions: en
+        ? ["Do you feel vibration in the pedal?", "Does the noise happen only when braking?"]
+        : ["¿Sientes vibración en el pedal?", "¿El ruido ocurre solamente al frenar?"],
     };
   }
 
   return {
-    summary: "Se requiere más información y una inspección física para acotar la causa.",
+    summary: en
+      ? "More information and a physical inspection are needed to narrow down the cause."
+      : "Se requiere más información y una inspección física para acotar la causa.",
     safetyLevel: "moderado",
-    safetyMessage: "Deja de conducir si aparecen humo, olor a combustible, pérdida de frenos, sobrecalentamiento o luces rojas.",
+    safetyMessage: en
+      ? "Stop driving if you notice smoke, fuel smell, brake failure, overheating, or red warning lights."
+      : "Deja de conducir si aparecen humo, olor a combustible, pérdida de frenos, sobrecalentamiento o luces rojas.",
     possibleCauses: [
       {
         probability: 45,
-        title: "Falla relacionada con el síntoma reportado",
-        reason: "La descripción permite orientar la inspección, pero todavía no identifica un sistema con suficiente certeza.",
-        test: "Realizar escaneo OBD-II, inspección visual y prueba de manejo controlada.",
-        urgency: "Diagnosticar",
+        title: en ? "Failure related to the reported symptom" : "Falla relacionada con el síntoma reportado",
+        reason: en ? "The description helps guide the inspection but doesn't yet identify a system with enough certainty." : "La descripción permite orientar la inspección, pero todavía no identifica un sistema con suficiente certeza.",
+        test: en ? "Perform OBD-II scan, visual inspection, and a controlled test drive." : "Realizar escaneo OBD-II, inspección visual y prueba de manejo controlada.",
+        urgency: en ? "Diagnose" : "Diagnosticar",
         tone: "warn",
       },
     ],
     estimate: {
-      low: 120,
-      high: 650,
-      partsLow: 0,
-      partsHigh: 400,
-      laborLow: 120,
-      laborHigh: 250,
-      laborHoursLow: 1,
-      laborHoursHigh: 2,
+      low: 120, high: 650, partsLow: 0, partsHigh: 400,
+      laborLow: 120, laborHigh: 250, laborHoursLow: 1, laborHoursHigh: 2,
       confidence: "Baja",
-      repairLabel: "Diagnóstico inicial del vehículo",
+      repairLabel: en ? "Initial vehicle diagnosis" : "Diagnóstico inicial del vehículo",
     },
-    questions: ["¿Cuándo comenzó?", "¿Hay luces de advertencia o códigos OBD-II?"],
+    questions: en
+      ? ["When did it start?", "Are there any warning lights or OBD-II codes?"]
+      : ["¿Cuándo comenzó?", "¿Hay luces de advertencia o códigos OBD-II?"],
   };
 }
 
 export async function diagnoseVehicle(input) {
   const vehicle = input.vehicle || {};
-  const systemPrompt = `Eres un asistente automotriz bilingüe para RepairScout. Responde en español.
+  const language = input.language === "en" ? "en" : "es";
+  const langLabel = language === "en" ? "English" : "Spanish";
+
+  const systemPrompt = language === "en"
+    ? `You are an automotive assistant for RepairScout. Respond in English.
+Your assessment is preliminary and must never be presented as a confirmed diagnosis.
+Prioritize safety. Clearly indicate when the vehicle should not be driven.
+Do not invent technical service bulletins, recalls, exact prices, parts availability, or OEM procedures.
+Probabilities are rough estimates and do not need to sum to 100.
+Costs must be conservative ranges in US dollars based on general independent repair.`
+    : `Eres un asistente automotriz para RepairScout. Responde en español.
 Tu evaluación es preliminar y nunca debe presentarse como un diagnóstico confirmado.
 Prioriza seguridad. Indica claramente cuándo no se debe conducir.
 No inventes boletines técnicos, retiros, precios exactos, disponibilidad de piezas ni procedimientos OEM.
 Las probabilidades son estimaciones orientativas y no deben sumar necesariamente 100.
 Los costos deben ser rangos prudentes en dólares estadounidenses basados en reparación independiente general.`;
+
   const userPrompt = JSON.stringify({
     vehicle,
     mileage: input.mileage,
     description: input.description,
     obdCodes: input.obdCodes || [],
     zip: input.zip,
+    language: langLabel,
   });
 
   const handlers = {
-    groq: diagnoseWithGroq,
-    gemini: diagnoseWithGemini,
-    openrouter: diagnoseWithOpenRouter,
+    groq: (sp, up) => diagnoseWithGroq(sp, up, language),
+    gemini: (sp, up) => diagnoseWithGemini(sp, up, language),
+    openrouter: (sp, up) => diagnoseWithOpenRouter(sp, up, language),
     "ai-gateway": diagnoseWithGateway,
     openai: diagnoseWithOpenAI,
   };
@@ -465,14 +485,11 @@ Los costos deben ser rangos prudentes en dólares estadounidenses basados en rep
   for (const provider of orderedProviders(input)) {
     try {
       const output = await handlers[provider](systemPrompt, userPrompt);
-      return {
-        ...output,
-        source: provider,
-      };
+      return { ...output, source: provider };
     } catch (error) {
       console.error(`${PROVIDER_LABELS[provider]} diagnosis failed:`, error?.message || "Unknown error");
     }
   }
 
-  return { ...fallbackDiagnosis(input.description), source: "fallback" };
+  return { ...fallbackDiagnosis(input.description, language), source: "fallback" };
 }

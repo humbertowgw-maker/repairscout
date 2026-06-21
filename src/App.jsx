@@ -31,7 +31,10 @@ import {
   Wrench,
   X,
 } from "lucide-react";
-import { diagnosisResults, partsResults, quoteRequests, shops as demoShops } from "./demoData";
+import {
+  diagnosisResults, partsResults, quoteRequests, shops as demoShops,
+  diagnosisResultsEn, partsResultsEn, shopsEn, quoteRequestsEn,
+} from "./demoData";
 import {
   createDiagnosis,
   decodeVin,
@@ -47,9 +50,16 @@ import {
   searchShops,
   updateQuoteRequestStatus,
 } from "./api";
+import { T, confidenceDisplay, safetyLevelDisplay, statusDisplay, quoteStatusKeys } from "./i18n";
 
-const steps = ["Describe el problema", "Evaluación con IA", "Compara costos", "Elige un taller"];
-const quoteStatuses = ["En revisión", "Requiere revisión", "Cotizada", "Cita solicitada", "Declinada"];
+const LangCtx = React.createContext({ lang: "es", setLang: () => {} });
+function useT() {
+  const { lang } = React.useContext(LangCtx);
+  return (key) => T[lang]?.[key] ?? T.es[key] ?? key;
+}
+function useLang() { return React.useContext(LangCtx); }
+
+const quoteStatuses = quoteStatusKeys;
 
 function Brand() {
   return (
@@ -62,6 +72,8 @@ function Brand() {
 
 function TopBar({ portal, setPortal, page, setPage, user, onAuth, onLogout }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { lang, setLang } = useLang();
+  const t = useT();
   const goHome = (nextPortal = portal) => {
     setPage("home");
     setPortal(nextPortal);
@@ -73,21 +85,32 @@ function TopBar({ portal, setPortal, page, setPage, user, onAuth, onLogout }) {
       <button className="brand-button" onClick={() => goHome("customer")}><Brand /></button>
       <nav className={mobileOpen ? "main-nav open" : "main-nav"}>
         <button className={page === "home" && portal === "customer" ? "active" : ""} onClick={() => goHome("customer")}>
-          Para conductores
+          {t("forDrivers")}
         </button>
         <button className={page === "home" && portal === "shop" ? "active" : ""} onClick={() => goHome("shop")}>
-          Para talleres
+          {t("forShops")}
         </button>
-        <button onClick={() => { setPage("support"); setMobileOpen(false); }}>Soporte</button>
+        <button onClick={() => { setPage("support"); setMobileOpen(false); }}>{t("support")}</button>
       </nav>
       <div className="top-actions">
+        <button
+          onClick={() => setLang(lang === "es" ? "en" : "es")}
+          title={lang === "es" ? "Switch to English" : "Cambiar a español"}
+          style={{
+            fontSize: 11, fontWeight: 700, letterSpacing: ".08em", padding: "5px 11px",
+            borderRadius: 6, border: "1px solid #1e2d47", background: "transparent",
+            color: "#94a3b8", cursor: "pointer", fontFamily: "inherit",
+          }}
+        >
+          {lang === "es" ? "EN" : "ES"}
+        </button>
         {user ? (
-          <button className="account-chip" onClick={onLogout}><UserRound size={16} />{user.name}<small>Salir</small></button>
+          <button className="account-chip" onClick={onLogout}><UserRound size={16} />{user.name}<small>{t("signOut")}</small></button>
         ) : (
-          <button className="text-button" onClick={onAuth}>Iniciar sesión</button>
+          <button className="text-button" onClick={onAuth}>{t("signIn")}</button>
         )}
         <button className="primary small" onClick={() => goHome(portal === "customer" ? "shop" : "customer")}>
-          {portal === "customer" ? "Portal del taller" : "Vista del conductor"}
+          {portal === "customer" ? t("shopPortal") : t("driverView")}
         </button>
       </div>
       <button className="mobile-menu" aria-label="Abrir o cerrar menú" onClick={() => setMobileOpen((value) => !value)}>
@@ -162,18 +185,22 @@ function AuthModal({ onClose, onAuthenticated }) {
 /* ── Shop panel components ── */
 
 function RequestsFullPanel({ requests, onSelect }) {
-  const [filter, setFilter] = useState("Todas");
-  const statuses = ["Todas", ...quoteStatuses, "Solicitud nueva"];
-  const filtered = filter === "Todas" ? requests : requests.filter((r) => r.status === filter);
+  const t = useT();
+  const { lang } = useLang();
+  const sdMap = statusDisplay[lang] || statusDisplay.es;
+  const [filter, setFilter] = useState("all");
+  const statuses = ["all", ...quoteStatuses, "Solicitud nueva"];
+  const filtered = filter === "all" ? requests : requests.filter((r) => r.status === filter);
 
   return (
     <section className="panel">
       <div className="panel-title">
-        <div><h2>Solicitudes de cotización</h2><p>{requests.length} solicitudes recibidas</p></div>
+        <div><h2>{t("requestsTitle")}</h2><p>{requests.length} {t("receivedInApp")}</p></div>
       </div>
       <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
         {statuses.map((s) => {
-          const count = s === "Todas" ? requests.length : requests.filter((r) => r.status === s).length;
+          const count = s === "all" ? requests.length : requests.filter((r) => r.status === s).length;
+          const displayLabel = s === "all" ? t("requestsAll") : (sdMap[s] ?? s);
           return (
             <button key={s} onClick={() => setFilter(s)} style={{
               fontSize: 11, padding: "5px 12px", borderRadius: 20, cursor: "pointer",
@@ -181,19 +208,19 @@ function RequestsFullPanel({ requests, onSelect }) {
               background: filter === s ? "rgba(249,115,22,.1)" : "transparent",
               color: filter === s ? "#f97316" : "#64748b", fontFamily: "inherit",
             }}>
-              {s} {count > 0 ? `(${count})` : ""}
+              {displayLabel} {count > 0 ? `(${count})` : ""}
             </button>
           );
         })}
       </div>
       <div className="request-list">
         {filtered.length === 0 ? (
-          <p style={{ color: "#334155", fontSize: 12, padding: "32px 0", textAlign: "center" }}>No hay solicitudes con este estado.</p>
+          <p style={{ color: "#334155", fontSize: 12, padding: "32px 0", textAlign: "center" }}>{t("noRequests")}</p>
         ) : filtered.map((r) => (
           <button className="request-row" key={r.id || `${r.customer}-${r.vehicle}`} onClick={() => onSelect(r)}>
             <span className="request-avatar">{r.initials}</span>
             <span className="request-main">
-              <span><strong>{r.customer}</strong><i className={r.status === "Cotizada" ? "quoted" : ""}>{r.status}</i></span>
+              <span><strong>{r.customer}</strong><i className={r.status === "Cotizada" ? "quoted" : ""}>{sdMap[r.status] ?? r.status}</i></span>
               <b>{r.vehicle}</b>
               <small>{r.issue}</small>
             </span>
@@ -400,6 +427,8 @@ function PartsSearchPanel() {
 }
 
 function ScoutPanel() {
+  const { lang } = useLang();
+  const t = useT();
   const [query, setQuery] = useState("");
   const [vehicle, setVehicle] = useState({ year: "2019", make: "Honda", model: "Accord" });
   const [result, setResult] = useState(null);
@@ -410,7 +439,7 @@ function ScoutPanel() {
     setLoading(true);
     setResult(null);
     try {
-      const r = await createDiagnosis({ vehicle, mileage: "62,000", description: query, zip: "95814" });
+      const r = await createDiagnosis({ vehicle, mileage: "62,000", description: query, zip: "95814", language: lang });
       setResult(r);
     } catch (e) {
       setResult({ error: e.message });
@@ -423,13 +452,13 @@ function ScoutPanel() {
     <section className="panel">
       <div className="panel-title">
         <div>
-          <span className="eyebrow dark"><Sparkles size={14} /> Centro de diagnóstico con IA</span>
-          <h2>Scout — Asesor técnico</h2>
-          <p>Ingresa el problema del cliente o un código DTC. Scout organiza causas probables, pasos de verificación y estimados.</p>
+          <span className="eyebrow dark"><Sparkles size={14} /> {t("scoutEyebrow")}</span>
+          <h2>{t("scoutTitle")}</h2>
+          <p>{t("scoutDesc")}</p>
         </div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12 }}>
-        {[["Año", "year"], ["Marca", "make"], ["Modelo", "model"]].map(([label, key]) => (
+        {[[t("scoutYear"), "year"], [t("scoutMake"), "make"], [t("scoutModel"), "model"]].map(([label, key]) => (
           <label key={key} style={{ fontSize: 10, color: "#64748b" }}>
             {label}
             <input
@@ -446,7 +475,7 @@ function ScoutPanel() {
       <textarea
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        placeholder="Ej: cliente reporta ruido al frenar a baja velocidad, vibración en el volante, código P0420..."
+        placeholder={t("scoutPlaceholder")}
         rows={4}
         style={{
           width: "100%", background: "#0a1020", border: "1px solid #1e2d47", color: "#e2e8f0",
@@ -455,7 +484,7 @@ function ScoutPanel() {
         }}
       />
       <button className="primary full" onClick={run} disabled={loading || !query.trim()} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-        {loading ? "Scout está analizando..." : <><Bot size={16} /> Iniciar diagnóstico Scout</>}
+        {loading ? t("scoutAnalyzing") : <><Bot size={16} /> {t("scoutBtn")}</>}
       </button>
 
       {result && !result.error && (
@@ -475,7 +504,7 @@ function ScoutPanel() {
               </div>
               <p style={{ fontSize: 11, color: "#64748b", lineHeight: 1.6, marginBottom: 4 }}>{c.reason}</p>
               <small style={{ fontSize: 10, color: "#475569", display: "flex", alignItems: "center", gap: 4 }}>
-                <Search size={11} /> Verificar: {c.test}
+                <Search size={11} /> {t("scoutVerify")} {c.test}
               </small>
             </article>
           ))}
@@ -484,7 +513,7 @@ function ScoutPanel() {
               padding: "14px 16px", marginTop: 8,
               background: "rgba(249,115,22,.04)", border: "1px solid rgba(249,115,22,.12)",
             }}>
-              <div style={{ fontSize: 10, color: "#f97316", marginBottom: 4, letterSpacing: ".1em" }}>ESTIMADO PRELIMINAR</div>
+              <div style={{ fontSize: 10, color: "#f97316", marginBottom: 4, letterSpacing: ".1em" }}>{t("scoutEstimate")}</div>
               <div style={{ fontSize: 24, fontWeight: 700, color: "#f1f5f9" }}>${result.estimate.low}–${result.estimate.high}</div>
               <p style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>{result.estimate.repairLabel}</p>
             </div>
@@ -617,10 +646,22 @@ function MessageModal({ request, onClose }) {
 /* ── Customer portal ── */
 
 function CustomerPortal({ user, onRequireAuth }) {
+  const { lang } = useLang();
+  const t = useT();
+  const isEn = lang === "en";
+
+  const demoCauses = isEn ? diagnosisResultsEn : diagnosisResults;
+  const demoParts = isEn ? partsResultsEn : partsResults;
+  const demoShopList = isEn ? shopsEn : demoShops;
+
+  const defaultDesc = isEn
+    ? "I hear a squealing noise from the front when I brake, especially at low speed."
+    : "Escucho un rechinido en la parte delantera cuando freno, especialmente a baja velocidad.";
+
   const [step, setStep] = useState(0);
-  const [description, setDescription] = useState("Escucho un rechinido en la parte delantera cuando freno, especialmente a baja velocidad.");
+  const [description, setDescription] = useState(defaultDesc);
   const [zip, setZip] = useState("95814");
-  const [radius, setRadius] = useState("25 millas");
+  const [radius, setRadius] = useState(t("r25"));
   const [requestedShops, setRequestedShops] = useState([]);
   const [vin, setVin] = useState("");
   const [vehicle, setVehicle] = useState({ year: "2019", make: "Honda", model: "Accord", trim: "Sport", engine: "1.5L Turbo" });
@@ -629,7 +670,7 @@ function CustomerPortal({ user, onRequireAuth }) {
   const [loading, setLoading] = useState(false);
   const [vinLoading, setVinLoading] = useState(false);
   const [error, setError] = useState("");
-  const [availableShops, setAvailableShops] = useState(demoShops);
+  const [availableShops, setAvailableShops] = useState(demoShopList);
   const [shopsLoading, setShopsLoading] = useState(false);
   const [shopSource, setShopSource] = useState("demo");
   const [vehicleSaved, setVehicleSaved] = useState(false);
@@ -638,11 +679,11 @@ function CustomerPortal({ user, onRequireAuth }) {
 
   const estimatedTotal = useMemo(() => {
     if (diagnosis?.estimate) return { low: diagnosis.estimate.low, high: diagnosis.estimate.high };
-    const lowest = Math.min(...partsResults.map((p) => p.price));
+    const lowest = Math.min(...demoParts.map((p) => p.price));
     return { low: Math.round(lowest + 190), high: Math.round(lowest + 365) };
-  }, [diagnosis]);
+  }, [diagnosis, demoParts]);
 
-  const displayedCauses = diagnosis?.possibleCauses || diagnosisResults;
+  const displayedCauses = diagnosis?.possibleCauses || demoCauses;
 
   const lookupVin = async () => {
     setError(""); setVinLoading(true);
@@ -655,7 +696,7 @@ function CustomerPortal({ user, onRequireAuth }) {
     if (!description.trim()) return;
     setError(""); setLoading(true);
     try {
-      const result = await createDiagnosis({ vehicle, mileage, description, zip });
+      const result = await createDiagnosis({ vehicle, mileage, description, zip, language: lang });
       setDiagnosis(result);
       setStep(1);
     } catch (e) { setError(e.message); }
@@ -663,7 +704,7 @@ function CustomerPortal({ user, onRequireAuth }) {
   };
 
   const requestQuote = async (shopName) => {
-    if (!quoteConsent) { setError("Confirma el aviso de privacidad antes de enviar tu solicitud al taller."); return; }
+    if (!quoteConsent) { setError(t("consentRequired")); return; }
     setError("");
     try {
       await saveQuoteRequest({
@@ -685,7 +726,7 @@ function CustomerPortal({ user, onRequireAuth }) {
       setShopSource(result.source);
     } catch (e) {
       setError(e.message);
-      setAvailableShops(demoShops);
+      setAvailableShops(demoShopList);
       setShopSource("fallback");
     } finally { setShopsLoading(false); }
   };
@@ -697,69 +738,73 @@ function CustomerPortal({ user, onRequireAuth }) {
     catch (e) { setError(e.message); }
   };
 
+  const steps = [t("step1"), t("step2"), t("step3"), t("step4")];
+  const symptoms = [t("symptom1"), t("symptom2"), t("symptom3")];
+  const confMap = confidenceDisplay[lang] || confidenceDisplay.es;
+
   return (
     <main>
       <section className="customer-hero">
         <div className="hero-copy">
-          <div className="eyebrow"><Sparkles size={15} /> Orientación de reparación con IA</div>
-          <h1>Conoce el problema.<br /><em>Conoce un precio justo.</em></h1>
-          <p>Describe el problema, compara costos reales de piezas y mano de obra, y conéctate con un taller local de confianza.</p>
+          <div className="eyebrow"><Sparkles size={15} /> {t("heroEyebrow")}</div>
+          <h1>{t("heroH1a")}<br /><em>{t("heroH1b")}</em></h1>
+          <p>{t("heroDesc")}</p>
           <div className="trust-row">
-            <span><ShieldCheck size={18} /> Sin precios sorpresa</span>
-            <span><BadgeCheck size={18} /> Talleres verificados</span>
-            <span><PackageSearch size={18} /> Búsqueda de piezas</span>
+            <span><ShieldCheck size={18} /> {t("trustNoSurprise")}</span>
+            <span><BadgeCheck size={18} /> {t("trustVerified")}</span>
+            <span><PackageSearch size={18} /> {t("trustParts")}</span>
           </div>
         </div>
 
         <div className="intake-card">
           <div className="intake-head">
-            <div><span className="step-label">PASO 1 DE 4</span><h2>Cuéntanos qué está pasando</h2></div>
+            <div><span className="step-label">{t("step1of4")}</span><h2>{t("intakeTitle")}</h2></div>
             <span className="ai-orb"><Bot size={23} /></span>
           </div>
-          <label htmlFor="vin">VIN del vehículo</label>
+          <label htmlFor="vin">{t("vinLabel")}</label>
           <div className="vin-row">
-            <input id="vin" maxLength="17" value={vin} onChange={(e) => setVin(e.target.value.toUpperCase())} placeholder="17 caracteres" />
+            <input id="vin" maxLength="17" value={vin} onChange={(e) => setVin(e.target.value.toUpperCase())} placeholder={t("vinPlaceholder")} />
             <button className="outline" onClick={lookupVin} disabled={vinLoading || vin.length !== 17}>
-              {vinLoading ? "Buscando..." : "Buscar VIN"}
+              {vinLoading ? t("vinLoading") : t("vinBtn")}
             </button>
           </div>
           <div className="vehicle-field">
             <span className="vehicle-icon"><Car size={21} /></span>
             <span>
               <strong>{vehicle.make} {vehicle.model} {vehicle.year}</strong>
-              <small>{[vehicle.trim, vehicle.engine].filter(Boolean).join(" · ")} · {mileage} millas</small>
+              <small>{[vehicle.trim, vehicle.engine].filter(Boolean).join(" · ")} · {mileage} {t("milesUnit")}</small>
             </span>
             <BadgeCheck size={18} />
           </div>
           <button className="save-vehicle" onClick={persistVehicle}>
-            {vehicleSaved ? <><Check size={14} /> Vehículo guardado</> : "Guardar vehículo en mi cuenta"}
+            {vehicleSaved ? <><Check size={14} /> {t("vehicleSaved")}</> : t("saveVehicle")}
           </button>
-          <label htmlFor="mileage">Millaje aproximado</label>
+          <label htmlFor="mileage">{t("mileageLabel")}</label>
           <input className="plain-input" id="mileage" value={mileage} onChange={(e) => setMileage(e.target.value)} />
-          <label htmlFor="description">Describe el problema</label>
+          <label htmlFor="description">{t("descLabel")}</label>
           <textarea id="description" value={description} onChange={(e) => setDescription(e.target.value)} />
           <div className="quick-symptoms">
-            {["Luz de advertencia", "Ruido extraño", "No enciende"].map((s) => (
+            {symptoms.map((s) => (
               <button key={s} onClick={() => setDescription(`${description} ${s}.`.trim())}>{s}</button>
             ))}
           </div>
           <div className="location-grid">
             <div>
-              <label htmlFor="zip">Código postal</label>
+              <label htmlFor="zip">{t("zipLabel")}</label>
               <div className="input-icon"><MapPin size={17} /><input id="zip" value={zip} onChange={(e) => setZip(e.target.value)} /></div>
             </div>
             <div>
-              <label htmlFor="radius">Radio de búsqueda</label>
+              <label htmlFor="radius">{t("radiusLabel")}</label>
               <select id="radius" value={radius} onChange={(e) => setRadius(e.target.value)}>
-                <option>10 millas</option><option>25 millas</option><option>50 millas</option><option>100 millas</option>
+                <option>{t("r10")}</option><option>{t("r25")}</option><option>{t("r50")}</option><option>{t("r100")}</option>
               </select>
             </div>
           </div>
           {error && <p className="form-error">{error}</p>}
           <button className="primary full" onClick={runAssessment} disabled={loading}>
-            {loading ? "Analizando el problema..." : "Iniciar evaluación con IA"} <ArrowRight size={18} />
+            {loading ? t("analyzing") : t("analyzeBtn")} <ArrowRight size={18} />
           </button>
-          <p className="medical-note">Esta orientación es preliminar. Se requiere una inspección física para confirmar la reparación.</p>
+          <p className="medical-note">{t("disclaimer")}</p>
         </div>
       </section>
 
@@ -774,27 +819,27 @@ function CustomerPortal({ user, onRequireAuth }) {
       {step === 0 && (
         <section className="landing-story">
           <div className="landing-story-head">
-            <span className="eyebrow dark"><Sparkles size={15} /> Una plataforma, dos lados</span>
-            <h2>Del síntoma a una cotización clara</h2>
-            <p>RepairScout conecta la investigación del conductor con la verificación profesional del taller.</p>
+            <span className="eyebrow dark"><Sparkles size={15} /> {t("platformEyebrow")}</span>
+            <h2>{t("platformTitle")}</h2>
+            <p>{t("platformDesc")}</p>
           </div>
           <div className="landing-feature-grid">
-            <article><span>01</span><Bot size={24} /><h3>Describe el problema</h3><p>Explica síntomas, agrega el VIN y recibe posibles causas con advertencias de seguridad.</p></article>
-            <article><span>02</span><PackageSearch size={24} /><h3>Compara el costo</h3><p>Consulta rangos de piezas y mano de obra antes de autorizar una reparación.</p></article>
-            <article><span>03</span><Building2 size={24} /><h3>Confirma con un taller</h3><p>Envía el caso a talleres cercanos para recibir evidencia y una cotización final.</p></article>
+            <article><span>01</span><Bot size={24} /><h3>{t("feat1Title")}</h3><p>{t("feat1Desc")}</p></article>
+            <article><span>02</span><PackageSearch size={24} /><h3>{t("feat2Title")}</h3><p>{t("feat2Desc")}</p></article>
+            <article><span>03</span><Building2 size={24} /><h3>{t("feat3Title")}</h3><p>{t("feat3Desc")}</p></article>
           </div>
           <div className="audience-grid">
             <article>
-              <small>PARA CONDUCTORES</small>
-              <h3>Más claridad antes de gastar</h3>
-              <p>Guarda vehículos, diagnósticos y cotizaciones en una sola cuenta.</p>
-              <button className="primary" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>Comenzar evaluación <ArrowRight size={17} /></button>
+              <small>{t("forDriversLabel")}</small>
+              <h3>{t("forDriversTitle")}</h3>
+              <p>{t("forDriversDesc")}</p>
+              <button className="primary" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>{t("forDriversBtn")} <ArrowRight size={17} /></button>
             </article>
             <article>
-              <small>PARA TALLERES</small>
-              <h3>Mejores clientes, mejor contexto</h3>
-              <p>Recibe solicitudes organizadas y convierte hallazgos técnicos en explicaciones claras.</p>
-              <button className="outline" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>Explorar RepairScout <Wrench size={17} /></button>
+              <small>{t("forShopsLabel")}</small>
+              <h3>{t("forShopsTitle")}</h3>
+              <p>{t("forShopsDesc")}</p>
+              <button className="outline" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>{t("forShopsBtn")} <Wrench size={17} /></button>
             </article>
           </div>
         </section>
@@ -804,42 +849,42 @@ function CustomerPortal({ user, onRequireAuth }) {
         <section className="results-section">
           <div className="section-heading split">
             <div>
-              <span className="eyebrow dark"><Gauge size={15} /> Evaluación preliminar</span>
-              <h2>Esto es lo que podría estar pasando</h2>
-              <p>Según tu vehículo, kilometraje y descripción. Estas posibilidades deben verificarse con pruebas.</p>
+              <span className="eyebrow dark"><Gauge size={15} /> {t("resultsEyebrow")}</span>
+              <h2>{t("resultsTitle")}</h2>
+              <p>{t("resultsDesc")}</p>
             </div>
             <div className="safety-alert">
               <ShieldCheck size={21} />
-              <span><strong>Aviso de seguridad</strong>{diagnosis?.safetyMessage || "Limita el uso del vehículo hasta inspeccionar los frenos."}</span>
+              <span><strong>{t("safetyTitle")}</strong>{diagnosis?.safetyMessage || t("defaultSafety")}</span>
             </div>
           </div>
           <div className="diagnosis-layout">
             <div className="diagnosis-list">
               {displayedCauses.map((r, i) => (
                 <article className={`diagnosis-card ${i === 0 ? "featured" : ""}`} key={r.title}>
-                  <div className={`probability ${r.tone}`}><strong>{r.probability}%</strong><span>probabilidad</span></div>
+                  <div className={`probability ${r.tone}`}><strong>{r.probability}%</strong><span>{t("probabilityLabel")}</span></div>
                   <div className="diagnosis-copy">
                     <div className="title-line"><h3>{r.title}</h3><span className={`status ${r.tone}`}>{r.urgency}</span></div>
                     <p>{r.reason}</p>
-                    <small><Search size={14} /> Verificar: {r.test}</small>
+                    <small><Search size={14} /> {t("scoutVerify")} {r.test}</small>
                   </div>
                 </article>
               ))}
             </div>
             <aside className="estimate-card">
-              <span className="eyebrow dark"><CircleDollarSign size={15} /> Rango estimado de reparación</span>
+              <span className="eyebrow dark"><CircleDollarSign size={15} /> {t("estimateEyebrow")}</span>
               <div className="big-price">${estimatedTotal.low}–${estimatedTotal.high}</div>
-              <p>{diagnosis?.estimate?.repairLabel || "Reemplazo de pastillas de freno delanteras, confirmando el estado de los rotores durante la inspección."}</p>
-              <div className="cost-row"><span>Piezas</span><strong>${diagnosis?.estimate?.partsLow ?? 40}–${diagnosis?.estimate?.partsHigh ?? 146}</strong></div>
-              <div className="cost-row"><span>Mano de obra · {diagnosis?.estimate?.laborHoursLow ?? 1.2}–{diagnosis?.estimate?.laborHoursHigh ?? 1.8} h</span><strong>${diagnosis?.estimate?.laborLow ?? 174}–${diagnosis?.estimate?.laborHigh ?? 261}</strong></div>
-              <div className="cost-row"><span>Materiales e impuestos</span><strong>$25–$58</strong></div>
-              <div className="confidence"><span>Confianza de la estimación</span><strong>{diagnosis?.estimate?.confidence || "Alta"}</strong><div><i /></div></div>
+              <p>{diagnosis?.estimate?.repairLabel || (isEn ? "Front brake pad replacement, confirming rotor condition during inspection." : "Reemplazo de pastillas de freno delanteras, confirmando el estado de los rotores durante la inspección.")}</p>
+              <div className="cost-row"><span>{t("partsLabel")}</span><strong>${diagnosis?.estimate?.partsLow ?? 40}–${diagnosis?.estimate?.partsHigh ?? 146}</strong></div>
+              <div className="cost-row"><span>{t("laborLabel")} · {diagnosis?.estimate?.laborHoursLow ?? 1.2}–{diagnosis?.estimate?.laborHoursHigh ?? 1.8} h</span><strong>${diagnosis?.estimate?.laborLow ?? 174}–${diagnosis?.estimate?.laborHigh ?? 261}</strong></div>
+              <div className="cost-row"><span>{t("taxLabel")}</span><strong>$25–$58</strong></div>
+              <div className="confidence"><span>{t("confidenceLabel")}</span><strong>{confMap[diagnosis?.estimate?.confidence] || confMap["Alta"]}</strong><div><i /></div></div>
               <small className="source-note">
                 {diagnosis?.source === "fallback"
-                  ? "Evaluación de respaldo basada en reglas"
-                  : `Evaluación generada con ${({ groq: "Groq", gemini: "Google Gemini", openrouter: "OpenRouter", "ai-gateway": "Vercel AI Gateway", openai: "OpenAI" })[diagnosis?.source] || "IA"}`}
+                  ? t("sourceFallback")
+                  : `${t("sourceAI")} ${({ groq: "Groq", gemini: "Google Gemini", openrouter: "OpenRouter", "ai-gateway": "Vercel AI Gateway", openai: "OpenAI" })[diagnosis?.source] || "AI"}`}
               </small>
-              <button className="primary full" onClick={() => setStep(2)}>Comparar piezas y mano de obra <ArrowRight size={17} /></button>
+              <button className="primary full" onClick={() => setStep(2)}>{t("compareBtn")} <ArrowRight size={17} /></button>
             </aside>
           </div>
         </section>
@@ -849,25 +894,25 @@ function CustomerPortal({ user, onRequireAuth }) {
         <section className="results-section soft">
           <div className="section-heading split">
             <div>
-              <span className="eyebrow dark"><PackageSearch size={15} /> Búsqueda de piezas</span>
-              <h2>Compara piezas cerca de {zip}</h2>
-              <p>Opciones de recogida local y en línea dentro del radio seleccionado de {radius}.</p>
+              <span className="eyebrow dark"><PackageSearch size={15} /> {t("partsEyebrow")}</span>
+              <h2>{t("partsTitle")} {zip}</h2>
+              <p>{t("partsDesc")} {radius}.</p>
             </div>
-            <button className="outline" onClick={findShops}>Buscar talleres reales <MapPin size={17} /></button>
+            <button className="outline" onClick={findShops}>{t("findShopsBtn")} <MapPin size={17} /></button>
           </div>
           <div className="parts-table">
-            <div className="table-head"><span>Vendedor y pieza</span><span>Disponibilidad</span><span>Garantía</span><span>Precio</span></div>
-            {partsResults.map((p) => (
+            <div className="table-head"><span>{t("colSeller")}</span><span>{t("colAvail")}</span><span>{t("colWarranty")}</span><span>{t("colPrice")}</span></div>
+            {demoParts.map((p) => (
               <div className="part-row" key={p.seller}>
                 <div className="seller-cell">
                   <span className="seller-icon"><Store size={20} /></span>
                   <span><strong>{p.seller}</strong><small>{p.part}</small><i>{p.badge}</i></span>
                 </div>
                 <div><strong>{p.availability}</strong><small>{p.distance}</small></div>
-                <div><strong>{p.warranty}</strong><small>Consulta los términos</small></div>
+                <div><strong>{p.warranty}</strong><small>{t("warrantyTerms")}</small></div>
                 <div className="part-price">
                   ${p.price.toFixed(2)}
-                  <button onClick={() => setPartDetail(p)}>Ver</button>
+                  <button onClick={() => setPartDetail(p)}>{t("viewBtn")}</button>
                 </div>
               </div>
             ))}
@@ -878,13 +923,13 @@ function CustomerPortal({ user, onRequireAuth }) {
       {step >= 3 && (
         <section className="results-section">
           <div className="section-heading">
-            <span className="eyebrow dark"><Building2 size={15} /> Talleres locales verificados</span>
-            <h2>Confirma el diagnóstico</h2>
-            <p>{shopsLoading ? "Buscando talleres cercanos..." : `Resultados de ${shopSource === "openstreetmap" ? "OpenStreetMap" : "RepairScout"}. Confirma disponibilidad directamente con el taller.`}</p>
+            <span className="eyebrow dark"><Building2 size={15} /> {t("shopsEyebrow")}</span>
+            <h2>{t("shopsTitle")}</h2>
+            <p>{shopsLoading ? t("shopsLoading") : t("shopsNote")(shopSource)}</p>
           </div>
           <label className="consent-box">
             <input type="checkbox" checked={quoteConsent} onChange={(e) => setQuoteConsent(e.target.checked)} />
-            <span>Autorizo que RepairScout envíe mi vehículo, descripción del problema, código postal y rango preliminar al taller que seleccione. Entiendo que la IA no reemplaza una inspección física.</span>
+            <span>{t("consentText")}</span>
           </label>
           <div className="shop-grid">
             {availableShops.map((shop) => {
@@ -899,14 +944,14 @@ function CustomerPortal({ user, onRequireAuth }) {
                     </div>
                   </div>
                   <p className="specialty">{shop.specialty}</p>
-                  <div className="shop-detail"><Clock3 size={16} /><span>Próxima cita<strong>{shop.availability}</strong></span></div>
-                  <div className="shop-detail"><CircleDollarSign size={16} /><span>Rango preliminar<strong>{shop.estimate}</strong></span></div>
+                  <div className="shop-detail"><Clock3 size={16} /><span>{t("nextAppointment")}<strong>{shop.availability}</strong></span></div>
+                  <div className="shop-detail"><CircleDollarSign size={16} /><span>{t("prelimRange")}<strong>{shop.estimate}</strong></span></div>
                   <button
                     className={requested ? "requested full" : "primary full"}
                     disabled={!requested && !quoteConsent}
                     onClick={() => requestQuote(shop.name)}
                   >
-                    {requested ? <><Check size={17} /> Cotización solicitada</> : <>Solicitar cotización verificada <ChevronRight size={17} /></>}
+                    {requested ? <><Check size={17} /> {t("quoteRequestedBtn")}</> : <>{t("requestQuoteBtn")} <ChevronRight size={17} /></>}
                   </button>
                 </article>
               );
@@ -922,7 +967,7 @@ function CustomerPortal({ user, onRequireAuth }) {
             <span className="eyebrow dark"><Store size={15} /> {partDetail.seller}</span>
             <h2 style={{ fontSize: 16, marginBottom: 8 }}>{partDetail.part}</h2>
             <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
-              {[["Precio", `$${partDetail.price.toFixed(2)}`], ["Disponibilidad", partDetail.availability], ["Ubicación", partDetail.distance], ["Garantía", partDetail.warranty], ["Insignia", partDetail.badge]].map(([l, v]) => (
+              {[[t("colPrice"), `$${partDetail.price.toFixed(2)}`], [t("colAvail"), partDetail.availability], ["Location", partDetail.distance], [t("colWarranty"), partDetail.warranty]].map(([l, v]) => (
                 <div key={l} style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
                   <span style={{ color: "#64748b" }}>{l}</span>
                   <strong style={{ color: "#f1f5f9" }}>{v}</strong>
@@ -930,7 +975,7 @@ function CustomerPortal({ user, onRequireAuth }) {
               ))}
             </div>
             <button className="primary full" onClick={() => window.open(`https://www.google.com/search?q=${encodeURIComponent(partDetail.part + " " + partDetail.seller)}`, "_blank")}>
-              Buscar en línea <ArrowRight size={16} />
+              {t("searchOnlineBtn")} <ArrowRight size={16} />
             </button>
           </section>
         </div>
@@ -942,15 +987,16 @@ function CustomerPortal({ user, onRequireAuth }) {
 /* ── Shop portal ── */
 
 function Sidebar({ active, setActive, shopProfile }) {
+  const t = useT();
   const links = [
-    ["Resumen", LayoutDashboard],
-    ["Solicitudes", MessageSquareText],
-    ["Citas", Calendar],
-    ["Órdenes de trabajo", Wrench],
-    ["Clientes", Users],
-    ["Búsqueda de piezas", PackageSearch],
-    ["Scout IA", Bot],
-    ["Perfil", Building2],
+    [t("tabResumen"), LayoutDashboard],
+    [t("tabSolicitudes"), MessageSquareText],
+    [t("tabCitas"), Calendar],
+    [t("tabOrdenes"), Wrench],
+    [t("tabClientes"), Users],
+    [t("tabPiezas"), PackageSearch],
+    [t("tabScout"), Bot],
+    [t("tabPerfil"), Building2],
   ];
 
   return (
@@ -958,23 +1004,23 @@ function Sidebar({ active, setActive, shopProfile }) {
       <Brand />
       <div className="shop-identity">
         <span>{(shopProfile?.shopName || "RS").slice(0, 2).toUpperCase()}</span>
-        <div><strong>{shopProfile?.shopName || "Configura tu taller"}</strong><small>{shopProfile?.claimed ? "Perfil reclamado" : "Administrador del taller"}</small></div>
+        <div><strong>{shopProfile?.shopName || "Configura tu taller"}</strong><small>{shopProfile?.claimed ? t("claimed") : "Admin"}</small></div>
         <ChevronDown size={16} />
       </div>
       <nav>
         {links.map(([label, Icon]) => (
           <button className={active === label ? "active" : ""} onClick={() => setActive(label)} key={label}>
-            <Icon size={18} />{label}{label === "Solicitudes" ? <i>3</i> : null}
+            <Icon size={18} />{label}{label === t("tabSolicitudes") ? <i>3</i> : null}
           </button>
         ))}
       </nav>
       <div className="sidebar-promo">
         <Bot size={25} />
-        <strong>Asesor de servicio con IA</strong>
-        <p>Prepara estimaciones y explica reparaciones en segundos.</p>
-        <button onClick={() => setActive("Scout IA")}>Preguntar a Scout</button>
+        <strong>{t("sidebarPromoTitle")}</strong>
+        <p>{t("sidebarPromoDesc")}</p>
+        <button onClick={() => setActive(t("tabScout"))}>{t("askScoutBtn")}</button>
       </div>
-      <small className="sidebar-foot">Taller RepairScout · Vista previa</small>
+      <small className="sidebar-foot">{t("sidebarFoot")}</small>
     </aside>
   );
 }
@@ -1008,7 +1054,14 @@ function ShopProfilePanel({ profileForm, setProfileForm, onSave, profileSaving, 
 }
 
 function ShopPortal({ user, onRequireAuth }) {
-  const [active, setActive] = useState("Resumen");
+  const { lang } = useLang();
+  const t = useT();
+  const demoQR = lang === "en" ? quoteRequestsEn : quoteRequests;
+  const [active, setActive] = useState(() => T[lang]?.tabResumen ?? "Resumen");
+
+  useEffect(() => {
+    setActive(T[lang]?.tabResumen ?? T.es.tabResumen);
+  }, [lang]);
   const [selectedRequest, setSelectedRequest] = useState(null);
   const [savedRequests, setSavedRequests] = useState([]);
   const [shopProfile, setShopProfile] = useState(null);
@@ -1045,7 +1098,7 @@ function ShopPortal({ user, onRequireAuth }) {
       const result = await saveShopProfile(profileForm);
       setShopProfile(result.profile);
       setProfileForm((c) => ({ ...c, ...result.profile }));
-      setProfileMessage("Perfil guardado. Tu taller ya puede operar como perfil reclamado.");
+      setProfileMessage(t("profileSaved"));
     } catch (e) { setProfileMessage(e.message); }
     finally { setProfileSaving(false); }
   };
@@ -1062,12 +1115,13 @@ function ShopPortal({ user, onRequireAuth }) {
   };
 
   const visibleRequests = useMemo(() => {
+    const locale = lang === "en" ? "en-US" : "es-US";
     const live = savedRequests.map((r) => ({
       ...r, value: r.estimate, distance: r.zip,
-      time: new Date(r.createdAt).toLocaleString("es-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
+      time: new Date(r.createdAt).toLocaleString(locale, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
     }));
-    return [...live, ...quoteRequests];
-  }, [savedRequests]);
+    return [...live, ...demoQR];
+  }, [savedRequests, demoQR, lang]);
 
   const openMessage = (request) => { setMessageTarget(request); setMessageOpen(true); setSelectedRequest(null); };
 
@@ -1077,11 +1131,11 @@ function ShopPortal({ user, onRequireAuth }) {
       <div className="shop-main">
         <header className="shop-header">
           <div>
-            <span className="breadcrumb">Portal del taller / {active}</span>
-            <h1>{active === "Resumen" ? `Buenos días${user?.name ? `, ${user.name.split(" ")[0]}` : ""}` : active}</h1>
+            <span className="breadcrumb">{t("shopPortalBreadcrumb")} / {active}</span>
+            <h1>{active === "Resumen" || active === "Overview" ? `${t("goodMorning")}${user?.name ? `, ${user.name.split(" ")[0]}` : ""}` : active}</h1>
           </div>
           <div className="shop-header-actions">
-            {!user && <button className="outline compact" onClick={onRequireAuth}>Iniciar sesión / crear cuenta</button>}
+            {!user && <button className="outline compact" onClick={onRequireAuth}>{t("signInCreate")}</button>}
             <button className="icon-button"><Search size={19} /></button>
             <button className="icon-button"><Bell size={19} /><i /></button>
             <span className="avatar">{user?.name ? user.name.split(/\s+/).slice(0, 2).map((p) => p[0]).join("").toUpperCase() : "RS"}</span>
@@ -1090,68 +1144,71 @@ function ShopPortal({ user, onRequireAuth }) {
 
         <div className="shop-content">
           <section className="connection-strip">
-            <span className={health?.database === "postgres" ? "live-badge on" : "live-badge"}>Base de datos: {health?.database || "revisando"}</span>
-            <span className={health?.authConfigured ? "live-badge on" : "live-badge"}>Cuentas: {health?.authConfigured ? "activas" : "pendientes"}</span>
+            <span className={health?.database === "postgres" ? "live-badge on" : "live-badge"}>{t("dbLabel")} {health?.database || t("dbChecking")}</span>
+            <span className={health?.authConfigured ? "live-badge on" : "live-badge"}>{t("accountsLabel")} {health?.authConfigured ? t("accountsActive") : t("accountsPending")}</span>
             <span className={health?.aiConfigured ? "live-badge warn" : "live-badge"}>
-              IA: {health?.aiProviders?.configured?.length ? health.aiProviders.configured.join(" + ") : "respaldo local"}
+              {t("aiLabel")} {health?.aiProviders?.configured?.length ? health.aiProviders.configured.join(" + ") : t("aiFallback")}
             </span>
-            <span className={shopProfile?.claimed ? "live-badge on" : "live-badge"}>Taller: {shopProfile?.claimed ? "reclamado" : "configúralo"}</span>
+            <span className={shopProfile?.claimed ? "live-badge on" : "live-badge"}>{t("shopStatusLabel")} {shopProfile?.claimed ? t("shopClaimed") : t("shopSetup")}</span>
           </section>
 
           {/* Profile panel — shown when tab is Perfil OR shop not yet claimed */}
-          {(active === "Perfil" || !shopProfile?.claimed) && (
+          {(active === t("tabPerfil") || !shopProfile?.claimed) && (
             <ShopProfilePanel profileForm={profileForm} setProfileForm={setProfileForm} onSave={saveProfile} profileSaving={profileSaving} profileMessage={profileMessage} />
           )}
 
           {/* ── Tab routing ── */}
-          {active === "Resumen" && (
+          {active === t("tabResumen") && (
             <>
               <section className="metric-grid">
-                <article style={{ cursor: "pointer" }} onClick={() => setActive("Solicitudes")}>
+                <article style={{ cursor: "pointer" }} onClick={() => setActive(t("tabSolicitudes"))}>
                   <span className="metric-icon green"><MessageSquareText /></span>
-                  <div><small>Nuevas solicitudes</small><strong>{visibleRequests.length}</strong><em>{savedRequests.length} recibidas en la app</em></div>
+                  <div><small>{t("newRequests")}</small><strong>{visibleRequests.length}</strong><em>{savedRequests.length} {t("receivedInApp")}</em></div>
                 </article>
-                <article style={{ cursor: "pointer" }} onClick={() => setActive("Citas")}>
+                <article style={{ cursor: "pointer" }} onClick={() => setActive(t("tabCitas"))}>
                   <span className="metric-icon blue"><Calendar /></span>
-                  <div><small>Citas de hoy</small><strong>7</strong><em>Primera a las 8:30 a. m.</em></div>
+                  <div><small>{t("todayAppts")}</small><strong>7</strong><em>{t("firstAppt")}</em></div>
                 </article>
-                <article style={{ cursor: "pointer" }} onClick={() => setActive("Órdenes de trabajo")}>
+                <article style={{ cursor: "pointer" }} onClick={() => setActive(t("tabOrdenes"))}>
                   <span className="metric-icon amber"><Wrench /></span>
-                  <div><small>Órdenes abiertas</small><strong>5</strong><em>3 en proceso</em></div>
+                  <div><small>{t("openOrders")}</small><strong>5</strong><em>{t("inProgress3")}</em></div>
                 </article>
                 <article>
                   <span className="metric-icon purple"><CircleDollarSign /></span>
-                  <div><small>Cotizado esta semana</small><strong>$8,940</strong><em className="positive">↑ 12.4%</em></div>
+                  <div><small>{t("quotedWeek")}</small><strong>$8,940</strong><em className="positive">↑ 12.4%</em></div>
                 </article>
               </section>
 
               <section className="shop-columns">
                 <div className="panel requests-panel">
                   <div className="panel-title">
-                    <div><h2>Solicitudes de cotización</h2><p>Clientes cercanos que buscan ayuda</p></div>
-                    <button onClick={() => setActive("Solicitudes")}>Ver todas</button>
+                    <div><h2>{t("quoteRequestsTitle")}</h2><p>{t("quoteRequestsDesc")}</p></div>
+                    <button onClick={() => setActive(t("tabSolicitudes"))}>{t("viewAll")}</button>
                   </div>
                   <div className="request-list">
-                    {visibleRequests.map((r) => (
-                      <button className="request-row" key={r.id || `${r.customer}-${r.vehicle}`} onClick={() => setSelectedRequest(r)}>
-                        <span className="request-avatar">{r.initials}</span>
-                        <span className="request-main"><span><strong>{r.customer}</strong><i className={r.status === "Cotizada" ? "quoted" : ""}>{r.status}</i></span><b>{r.vehicle}</b><small>{r.issue}</small></span>
-                        <span className="request-meta"><strong>{r.value}</strong><small>{r.distance} · {r.time}</small><ChevronRight size={17} /></span>
-                      </button>
-                    ))}
+                    {visibleRequests.map((r) => {
+                      const sdMap = statusDisplay[lang] || statusDisplay.es;
+                      return (
+                        <button className="request-row" key={r.id || `${r.customer}-${r.vehicle}`} onClick={() => setSelectedRequest(r)}>
+                          <span className="request-avatar">{r.initials}</span>
+                          <span className="request-main"><span><strong>{r.customer}</strong><i className={r.status === "Cotizada" ? "quoted" : ""}>{sdMap[r.status] ?? r.status}</i></span><b>{r.vehicle}</b><small>{r.issue}</small></span>
+                          <span className="request-meta"><strong>{r.value}</strong><small>{r.distance} · {r.time}</small><ChevronRight size={17} /></span>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 
                 <div className="panel schedule-panel">
                   <div className="panel-title">
-                    <div><h2>Agenda de hoy</h2><p>Sábado, 20 de junio</p></div>
-                    <button onClick={() => setActive("Citas")}><Calendar size={17} /></button>
+                    <div><h2>{t("todaySchedule")}</h2><p>{t("scheduleDate")}</p></div>
+                    <button onClick={() => setActive(t("tabCitas"))}><Calendar size={17} /></button>
                   </div>
                   <div className="timeline">
                     <div><time>8:30</time><span className="timeline-dot active" /><article><strong>Cambio de aceite e inspección</strong><p>Taylor Kim · Subaru Outback 2020</p><i>En proceso</i></article></div>
                     <div><time>10:00</time><span className="timeline-dot" /><article><strong>Diagnóstico de frenos</strong><p>Marcus Hill · Chevrolet Malibu 2018</p><i className="scheduled">Confirmada</i></article></div>
                     <div><time>11:30</time><span className="timeline-dot" /><article><strong>El aire acondicionado no enfría</strong><p>Ana Cruz · Honda Civic 2016</p><i className="scheduled">Confirmada</i></article></div>
-                    <div><time>1:00</time><span className="timeline-dot empty" /><article className="open-slot"><strong>Cita disponible</strong><button onClick={() => setBookingOpen(true)}>Reservar</button></article></div>
+                    <div><time>1:00</time><span className="timeline-dot empty" /><article className="open-slot"><strong>{t("openSlotLabel")}</strong><button onClick={() => setBookingOpen(true)}>{t("reserveBtn")}</button></article></div>
                   </div>
                 </div>
               </section>
@@ -1160,37 +1217,37 @@ function ShopPortal({ user, onRequireAuth }) {
                 <article className="ai-workbench">
                   <span className="ai-large"><Bot /></span>
                   <div>
-                    <span className="eyebrow"><Sparkles size={14} /> Centro de diagnóstico con IA</span>
-                    <h2>Convierte síntomas en un plan de pruebas</h2>
-                    <p>Ingresa el problema del cliente o un código DTC. Scout organizará causas probables, pasos de verificación, piezas y mano de obra.</p>
+                    <span className="eyebrow"><Sparkles size={14} /> {t("workbenchEyebrow")}</span>
+                    <h2>{t("workbenchTitle")}</h2>
+                    <p>{t("workbenchDesc")}</p>
                   </div>
-                  <button onClick={() => setActive("Scout IA")}>Iniciar diagnóstico <ArrowRight size={17} /></button>
+                  <button onClick={() => setActive(t("tabScout"))}>{t("workbenchBtn")} <ArrowRight size={17} /></button>
                 </article>
                 <article className="conversion-card">
-                  <div className="panel-title"><div><h2>Rendimiento de cotizaciones</h2><p>Últimos 30 días</p></div></div>
-                  <div className="conversion-stat"><strong>68%</strong><span>tasa de aprobación<em>↑ 8%</em></span></div>
+                  <div className="panel-title"><div><h2>{t("conversionTitle")}</h2><p>{t("conversionPeriod")}</p></div></div>
+                  <div className="conversion-stat"><strong>68%</strong><span>{t("conversionRate")}<em>↑ 8%</em></span></div>
                   <div className="bar"><i /></div>
-                  <div className="mini-stats"><span><strong>42</strong>Enviadas</span><span><strong>29</strong>Aprobadas</span><span><strong>$412</strong>Promedio</span></div>
+                  <div className="mini-stats"><span><strong>42</strong>{t("conversionSent")}</span><span><strong>29</strong>{t("conversionApproved")}</span><span><strong>$412</strong>{t("conversionAvg")}</span></div>
                 </article>
               </section>
             </>
           )}
 
-          {active === "Solicitudes" && (
+          {active === t("tabSolicitudes") && (
             <RequestsFullPanel requests={visibleRequests} onSelect={setSelectedRequest} />
           )}
 
-          {active === "Citas" && (
+          {active === t("tabCitas") && (
             <AppointmentsPanel onBook={() => setBookingOpen(true)} />
           )}
 
-          {active === "Órdenes de trabajo" && <WorkOrdersPanel />}
+          {active === t("tabOrdenes") && <WorkOrdersPanel />}
 
-          {active === "Clientes" && <CustomersPanel requests={visibleRequests} />}
+          {active === t("tabClientes") && <CustomersPanel requests={visibleRequests} />}
 
-          {active === "Búsqueda de piezas" && <PartsSearchPanel />}
+          {active === t("tabPiezas") && <PartsSearchPanel />}
 
-          {active === "Scout IA" && <ScoutPanel />}
+          {active === t("tabScout") && <ScoutPanel />}
         </div>
       </div>
 
@@ -1199,35 +1256,34 @@ function ShopPortal({ user, onRequireAuth }) {
         <div className="modal-backdrop" onClick={() => setSelectedRequest(null)}>
           <section className="quote-drawer" onClick={(e) => e.stopPropagation()}>
             <button className="drawer-close" onClick={() => setSelectedRequest(null)}><X /></button>
-            <span className="eyebrow dark"><FileCheck2 size={15} /> Solicitud de cotización</span>
+            <span className="eyebrow dark"><FileCheck2 size={15} /> {t("quoteDrawerEyebrow")}</span>
             <h2>{selectedRequest.vehicle}</h2>
             <p className="drawer-customer">{selectedRequest.customer} · {selectedRequest.distance}</p>
             <div className="concern-box">
-              <small>PROBLEMA DEL CLIENTE</small>
+              <small>{t("clientProblem")}</small>
               <strong>{selectedRequest.issue}</strong>
-              <p>La información recopilada por IA está lista para revisión. Confirma los hallazgos antes de emitir el diagnóstico final.</p>
             </div>
-            <h3>Punto de partida sugerido por la IA</h3>
-            <div className="drawer-check"><Check size={16} /><span><strong>Inspeccionar el sistema reportado</strong>Revisar los síntomas y escanear el vehículo en busca de códigos relacionados.</span></div>
-            <div className="drawer-check"><Check size={16} /><span><strong>Verificar antes de reemplazar piezas</strong>Adjuntar mediciones, fotografías o resultados de pruebas.</span></div>
-            <div className="draft-total"><span>Rango preliminar del cliente</span><strong>{selectedRequest.value}</strong></div>
+            <h3>{t("aiStartingPoint")}</h3>
+            <div className="drawer-check"><Check size={16} /><span><strong>{t("check1")}</strong>{t("check1Desc")}</span></div>
+            <div className="drawer-check"><Check size={16} /><span><strong>{t("check2")}</strong>{t("check2Desc")}</span></div>
+            <div className="draft-total"><span>{t("clientRange")}</span><strong>{selectedRequest.value}</strong></div>
             {selectedRequest.id && (
               <div className="status-actions">
-                <small>Actualizar estado</small>
+                <small>{t("updateStatus")}</small>
                 {quoteStatuses.map((status) => (
                   <button key={status} className={selectedRequest.status === status ? "active" : ""}
                     disabled={statusUpdating === `${selectedRequest.id}:${status}`}
                     onClick={() => changeRequestStatus(selectedRequest, status)}>
-                    {statusUpdating === `${selectedRequest.id}:${status}` ? "Guardando..." : status}
+                    {statusUpdating === `${selectedRequest.id}:${status}` ? t("saving") : (statusDisplay[lang]?.[status] ?? status)}
                   </button>
                 ))}
               </div>
             )}
-            <button className="primary full" onClick={() => { setSelectedRequest(null); setActive("Scout IA"); }}>
-              Abrir centro de diagnóstico <ArrowRight size={17} />
+            <button className="primary full" onClick={() => { setSelectedRequest(null); setActive(t("tabScout")); }}>
+              {t("openDiagBtn")} <ArrowRight size={17} />
             </button>
             <button className="outline full" onClick={() => openMessage(selectedRequest)}>
-              Enviar mensaje al cliente
+              {t("sendMsgBtn")}
             </button>
           </section>
         </div>
@@ -1296,14 +1352,15 @@ function LegalPage({ page, setPage }) {
 }
 
 function Footer({ setPage }) {
+  const t = useT();
   return (
     <footer className="site-footer">
       <Brand />
-      <p>Orientación automotriz preliminar. La reparación final siempre debe ser verificada por un profesional.</p>
+      <p>{t("footerDesc")}</p>
       <nav>
-        <button onClick={() => setPage("privacy")}>Privacidad</button>
-        <button onClick={() => setPage("terms")}>Términos</button>
-        <button onClick={() => setPage("support")}>Soporte</button>
+        <button onClick={() => setPage("privacy")}>{t("privacyBtn")}</button>
+        <button onClick={() => setPage("terms")}>{t("termsBtn")}</button>
+        <button onClick={() => setPage("support")}>{t("supportBtn")}</button>
       </nav>
     </footer>
   );
@@ -1314,6 +1371,7 @@ export default function App() {
   const [page, setPage] = useState("home");
   const [user, setUser] = useState(null);
   const [authOpen, setAuthOpen] = useState(false);
+  const [lang, setLang] = useState("es");
 
   useEffect(() => {
     if (!window.localStorage.getItem("repairscout_token")) return;
@@ -1325,7 +1383,7 @@ export default function App() {
   const logout = () => { window.localStorage.removeItem("repairscout_token"); setUser(null); setPortal("customer"); };
 
   return (
-    <>
+    <LangCtx.Provider value={{ lang, setLang }}>
       {(portal === "customer" || page !== "home") && <TopBar portal={portal} setPortal={setPortal} page={page} setPage={setPage} user={user} onAuth={() => setAuthOpen(true)} onLogout={logout} />}
       {page === "home"
         ? portal === "customer"
@@ -1335,6 +1393,6 @@ export default function App() {
       }
       {(portal === "customer" || page !== "home") && <Footer setPage={setPage} />}
       {authOpen && <AuthModal onClose={() => setAuthOpen(false)} onAuthenticated={setUser} />}
-    </>
+    </LangCtx.Provider>
   );
 }

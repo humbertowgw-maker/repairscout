@@ -129,3 +129,137 @@ export const quoteRequests = [
     initials: "CB",
   },
 ];
+
+// ─── English variants ─────────────────────────────────────────────────────────
+
+export const diagnosisResultsEn = [
+  {
+    probability: 78,
+    title: "Worn front brake pads",
+    reason: "Squealing when braking usually occurs when the pad material is nearly depleted.",
+    test: "Inspect front pad thickness and rotor surface condition.",
+    urgency: "Don't delay",
+    tone: "danger",
+  },
+  {
+    probability: 54,
+    title: "Scored front rotors",
+    reason: "Metal-to-metal contact can create grooves and vibration.",
+    test: "Measure rotor thickness and lateral runout.",
+    urgency: "Inspect today",
+    tone: "warn",
+  },
+  {
+    probability: 21,
+    title: "Wheel bearing wear",
+    reason: "A damaged bearing can produce a squeal that changes with vehicle speed.",
+    test: "Lift the vehicle and check for wheel play and bearing noise.",
+    urgency: "Rule out",
+    tone: "neutral",
+  },
+];
+
+export const partsResultsEn = [
+  {
+    seller: "AutoZone",
+    part: "Duralast Gold DG1892 Ceramic Brake Pads",
+    price: 64.99,
+    availability: "Pickup today",
+    distance: "2.4 mi",
+    warranty: "Lifetime limited warranty",
+    badge: "Fastest",
+  },
+  {
+    seller: "O'Reilly Auto Parts",
+    part: "Import Direct Ceramic Brake Pads",
+    price: 58.49,
+    availability: "Pickup in 2 hours",
+    distance: "3.1 mi",
+    warranty: "Lifetime limited warranty",
+    badge: "Best local price",
+  },
+  {
+    seller: "NAPA Auto Parts",
+    part: "NAPA Premium Ceramic Brake Pads",
+    price: 72.99,
+    availability: "1 in stock",
+    distance: "5.8 mi",
+    warranty: "Lifetime limited warranty",
+    badge: "Premium",
+  },
+  {
+    seller: "RockAuto",
+    part: "Power Stop Z17 Ceramic Brake Pads",
+    price: 39.79,
+    availability: "Delivery Jun 24–26",
+    distance: "Online",
+    warranty: "90 days",
+    badge: "Lowest price",
+  },
+];
+
+export const shopsEn = [
+  {
+    name: "Mason Street Auto",
+    distance: "2.7 mi",
+    rating: 4.9,
+    reviews: 318,
+    specialty: "Brake and suspension specialist",
+    availability: "Today, 2:30 PM",
+    estimate: "$312–$428",
+    verified: true,
+  },
+  {
+    name: "Precision Motor Works",
+    distance: "4.1 mi",
+    rating: 4.8,
+    reviews: 204,
+    specialty: "ASE-certified technicians",
+    availability: "Tomorrow, 8:00 AM",
+    estimate: "$289–$445",
+    verified: true,
+  },
+  {
+    name: "Northside Garage",
+    distance: "6.3 mi",
+    rating: 4.7,
+    reviews: 146,
+    specialty: "Family business since 1998",
+    availability: "Tomorrow, 10:30 AM",
+    estimate: "$325–$470",
+    verified: true,
+  },
+];
+
+export const quoteRequestsEn = [
+  {
+    customer: "Jordan Lee",
+    vehicle: "2019 Honda Accord Sport",
+    issue: "Squealing when braking",
+    distance: "2.7 mi",
+    status: "Solicitud nueva",
+    time: "8 min ago",
+    value: "$312–$428",
+    initials: "JL",
+  },
+  {
+    customer: "Maya Robinson",
+    vehicle: "2017 Toyota RAV4 XLE",
+    issue: "Check engine light · P0420",
+    distance: "5.2 mi",
+    status: "Requiere revisión",
+    time: "42 min ago",
+    value: "$580–$1,240",
+    initials: "MR",
+  },
+  {
+    customer: "Chris Bennett",
+    vehicle: "2021 Ford F-150 XLT",
+    issue: "Steering wheel vibration above 55 mph",
+    distance: "7.6 mi",
+    status: "Cotizada",
+    time: "Yesterday",
+    value: "$189",
+    initials: "CB",
+  },
+];

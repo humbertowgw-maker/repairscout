@@ -189,6 +189,65 @@ export async function sendShopApprovalNotification({ shopPhone, shopEmail, custo
   return results;
 }
 
+const STAGE_MESSAGES = {
+  "Parts Ordered": {
+    en: (v) => `RepairScout update: Parts have been ordered for your ${v}. We'll let you know when they arrive.`,
+    es: (v) => `Actualización RepairScout: Las piezas para tu ${v} han sido pedidas. Te avisaremos cuando lleguen.`,
+  },
+  "Parts In Transit": {
+    en: (v) => `RepairScout update: Parts for your ${v} are on the way — we'll start repairs once they arrive.`,
+    es: (v) => `Actualización RepairScout: Las piezas para tu ${v} están en camino. Empezaremos las reparaciones cuando lleguen.`,
+  },
+  "Parts Arrived": {
+    en: (v) => `RepairScout update: Parts for your ${v} have arrived. We're starting your repair soon!`,
+    es: (v) => `Actualización RepairScout: Las piezas para tu ${v} llegaron. ¡Comenzaremos tu reparación pronto!`,
+  },
+  "In Progress": {
+    en: (v) => `RepairScout update: Your ${v} repair is now in progress. We'll let you know when it's done!`,
+    es: (v) => `Actualización RepairScout: La reparación de tu ${v} está en proceso. ¡Te avisaremos cuando esté lista!`,
+  },
+  "Quality Check": {
+    en: (v) => `RepairScout update: Your ${v} is in quality inspection — almost done!`,
+    es: (v) => `Actualización RepairScout: Tu ${v} está en inspección de calidad. ¡Casi lista!`,
+  },
+  "Ready for Pickup": {
+    en: (v) => `RepairScout: Your ${v} is READY FOR PICKUP! 🎉 Come by during business hours.`,
+    es: (v) => `RepairScout: ¡Tu ${v} está LISTA PARA RECOGER! 🎉 Pasa en horario de atención.`,
+  },
+  "Completed": {
+    en: (v) => `RepairScout: Your ${v} repair is complete. Thank you for trusting us!`,
+    es: (v) => `RepairScout: La reparación de tu ${v} está completa. ¡Gracias por confiar en nosotros!`,
+  },
+};
+
+export async function sendStageUpdateNotification({ customerEmail, customerPhone, customerName, vehicle, stage, trackUrl, lang = "es" }) {
+  const msgFn = STAGE_MESSAGES[stage];
+  if (!msgFn) return {};
+
+  const isEn = lang === "en";
+  const smsBody = msgFn[isEn ? "en" : "es"](vehicle) + (trackUrl ? ` Track: ${trackUrl}` : "");
+  const subject = isEn ? `Repair update: ${stage} — ${vehicle}` : `Actualización de reparación: ${stage} — ${vehicle}`;
+  const html = `<div style="font-family:system-ui;max-width:520px;margin:0 auto">
+    <h2 style="color:#1e3a5f">RepairScout</h2>
+    <p>Hi ${customerName},</p>
+    <p>${msgFn[isEn ? "en" : "es"](vehicle)}</p>
+    ${trackUrl ? `<a href="${trackUrl}" style="display:inline-block;background:#1e3a5f;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700">Track your repair →</a>` : ""}
+  </div>`;
+
+  const results = {};
+  if (customerEmail) {
+    try { results.email = await sendEmail({ to: customerEmail, subject, html }); }
+    catch (e) { results.emailError = e.message; }
+  }
+  if (customerPhone) {
+    const normalized = customerPhone.replace(/\D/g, "");
+    const e164 = normalized.startsWith("1") ? `+${normalized}` : `+1${normalized}`;
+    try { results.sms = await sendSms({ to: e164, body: smsBody }); }
+    catch (e) { results.smsError = e.message; }
+  }
+  return results;
+}
+
 export async function sendInvoiceNotification({ customerEmail, customerPhone, customerName, vehicle, invoiceTotal, trackUrl }) {
   const body = `RepairScout invoice for ${vehicle}: $${Number(invoiceTotal).toFixed(2)}. View here: ${trackUrl}`;
   const results = {};

@@ -47,7 +47,7 @@ import {
 } from "./database.js";
 import { diagnoseVehicle, getDiagnosisProviderStatus } from "./diagnosis.js";
 import { buildQuoteFromDiagnosis } from "./parts.js";
-import { sendQuoteNotification, sendShopApprovalNotification, sendInvoiceNotification } from "./notify.js";
+import { sendQuoteNotification, sendShopApprovalNotification, sendInvoiceNotification, sendStageUpdateNotification } from "./notify.js";
 import { searchRepairShops } from "./shops.js";
 import { generateOtp, normalizePhone, OTP_TTL_MS, sendOtpSms } from "./otp.js";
 import { constructWebhookEvent, createDiagnosisCheckout } from "./stripe.js";
@@ -608,6 +608,21 @@ app.patch("/api/quotes/:id/repair-stage", requireAuth, async (request, response)
   if (!parsed.success) return response.status(400).json({ error: "Estado de reparación no válido." });
   const updated = await updateRepairStage({ id: request.params.id, stage: parsed.data.stage });
   if (!updated) return response.status(404).json({ error: "No encontramos esa cotización." });
+
+  // Notify customer of stage change (fire-and-forget)
+  if (updated.customerEmail || updated.customerPhone) {
+    const veh = updated.vehicle || {};
+    const vehicleStr = [veh.year, veh.make, veh.model].filter(Boolean).join(" ") || "Vehicle";
+    sendStageUpdateNotification({
+      customerEmail: updated.customerEmail,
+      customerPhone: updated.customerPhone,
+      customerName: updated.customerName,
+      vehicle: vehicleStr,
+      stage: parsed.data.stage,
+      trackUrl: `${process.env.APP_URL || "https://repairscout.app"}/track/${updated.token}`,
+    }).catch((e) => console.error("[stage-notify]", e.message));
+  }
+
   response.json({ quote: updated });
 });
 

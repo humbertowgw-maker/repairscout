@@ -823,3 +823,81 @@ export async function getPartsInquiryById(inquiryId) {
   const store = await readStore();
   return store.partsInquiries?.[inquiryId] || null;
 }
+
+// ── Admin ─────────────────────────────────────────────────────────────────────
+
+export async function adminMigrate() {
+  if (!pool) return;
+  await ensureDatabase();
+  // Widen role check to include 'admin' and seed the admin account
+  await pool.query(`
+    alter table users drop constraint if exists users_role_check;
+    alter table users add constraint users_role_check check (role in ('driver','shop','admin'));
+    update users set role = 'admin' where email = 'humberto.wgw@gmail.com' and role != 'admin';
+  `);
+}
+
+export async function listAllUsers() {
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query(
+      "select id, name, email, role, shop_name, created_at from users order by created_at desc limit 500"
+    );
+    return result.rows.map((r) => ({
+      id: r.id, name: r.name, email: r.email, role: r.role,
+      shopName: r.shop_name, createdAt: r.created_at,
+    }));
+  }
+  const store = await readStore();
+  return (store.users || []).map(({ passwordHash, ...u }) => u);
+}
+
+export async function setUserRole(id, role) {
+  if (pool) {
+    await ensureDatabase();
+    await pool.query("update users set role=$2 where id=$1", [id, role]);
+    return findUserById(id);
+  }
+  await updateStore((store) => ({
+    ...store,
+    users: (store.users || []).map((u) => u.id === id ? { ...u, role } : u),
+  }));
+  return findUserById(id);
+}
+
+export async function getAdminStats() {
+  if (pool) {
+    await ensureDatabase();
+    const [users, quotes, diagnoses, approved, shops] = await Promise.all([
+      pool.query("select role, count(*)::int as count from users group by role"),
+      pool.query("select count(*)::int as count from quote_requests"),
+      pool.query("select count(*)::int as count from diagnoses"),
+      pool.query("select count(*)::int as count from itemized_quotes where customer_approved=true"),
+      pool.query("select count(*)::int as count from shop_profiles"),
+    ]);
+    const byRole = {};
+    for (const row of users.rows) byRole[row.role] = row.count;
+    return {
+      totalUsers: Object.values(byRole).reduce((a, b) => a + b, 0),
+      drivers: byRole.driver || 0,
+      shops: byRole.shop || 0,
+      admins: byRole.admin || 0,
+      totalQuotes: quotes.rows[0]?.count || 0,
+      totalDiagnoses: diagnoses.rows[0]?.count || 0,
+      approvedQuotes: approved.rows[0]?.count || 0,
+      shopProfiles: shops.rows[0]?.count || 0,
+    };
+  }
+  const store = await readStore();
+  const users = store.users || [];
+  return {
+    totalUsers: users.length,
+    drivers: users.filter((u) => u.role === "driver").length,
+    shops: users.filter((u) => u.role === "shop").length,
+    admins: users.filter((u) => u.role === "admin").length,
+    totalQuotes: (store.quoteRequests || []).length,
+    totalDiagnoses: (store.diagnoses || []).length,
+    approvedQuotes: (store.itemizedQuotes || []).filter((q) => q.customerApproved).length,
+    shopProfiles: (store.shopProfiles || []).length,
+  };
+}

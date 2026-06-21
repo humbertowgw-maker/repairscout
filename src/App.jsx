@@ -67,6 +67,10 @@ import {
   startPartsVerification,
   getPartsInquiryBatch,
   searchParts,
+  getAdminStats,
+  getAdminUsers,
+  setAdminUserRole,
+  getAdminQuotes,
 } from "./api";
 import { T, confidenceDisplay, safetyLevelDisplay, statusDisplay, quoteStatusKeys } from "./i18n";
 
@@ -2658,10 +2662,11 @@ function SentQuotesPanel({ user }) {
   );
 }
 
-function Sidebar({ active, setActive, shopProfile }) {
+function Sidebar({ active, setActive, shopProfile, user }) {
   const t = useT();
   const { lang } = useLang();
   const isEn = lang === "en";
+  const isAdmin = user?.role === "admin";
   const links = [
     [t("tabResumen"), LayoutDashboard],
     [t("tabSolicitudes"), MessageSquareText],
@@ -2672,6 +2677,7 @@ function Sidebar({ active, setActive, shopProfile }) {
     [t("tabPiezas"), PackageSearch],
     [t("tabScout"), Bot],
     [t("tabPerfil"), Building2],
+    ...(isAdmin ? [["Admin", ShieldCheck]] : []),
   ];
 
   return (
@@ -2731,6 +2737,149 @@ function ShopProfilePanel({ profileForm, setProfileForm, onSave, profileSaving, 
       <button className="primary" onClick={onSave} disabled={profileSaving}>
         {profileSaving ? (isEn ? "Saving..." : "Guardando...") : (isEn ? "Save & claim shop" : "Guardar y reclamar taller")} <Check size={17} />
       </button>
+    </section>
+  );
+}
+
+const ROLE_COLOR = { admin: "#a855f7", shop: "#3b82f6", driver: "#22c55e" };
+
+function AdminPanel() {
+  const { lang } = useLang();
+  const isEn = lang === "en";
+  const [stats, setStats] = useState(null);
+  const [users, setUsers] = useState([]);
+  const [quotes, setQuotes] = useState([]);
+  const [activeTab, setActiveTab] = useState("overview");
+  const [loading, setLoading] = useState(true);
+  const [roleUpdating, setRoleUpdating] = useState("");
+
+  useEffect(() => {
+    Promise.allSettled([getAdminStats(), getAdminUsers(), getAdminQuotes()])
+      .then(([s, u, q]) => {
+        if (s.status === "fulfilled") setStats(s.value);
+        if (u.status === "fulfilled") setUsers(u.value.users || []);
+        if (q.status === "fulfilled") setQuotes(q.value.quotes || []);
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  const changeRole = async (id, role) => {
+    setRoleUpdating(id);
+    try {
+      await setAdminUserRole(id, role);
+      setUsers((prev) => prev.map((u) => u.id === id ? { ...u, role } : u));
+    } catch (e) { console.error(e); }
+    finally { setRoleUpdating(""); }
+  };
+
+  const STAT_DARK = { background: "#0d1829", border: "1px solid #1e2d47", borderRadius: 10, padding: "16px 18px" };
+
+  if (loading) return <section className="panel"><p style={{ color: "#94a3b8", padding: 24 }}>Loading admin data…</p></section>;
+
+  return (
+    <section className="panel">
+      <div className="panel-title">
+        <div>
+          <h2 style={{ display: "flex", alignItems: "center", gap: 8 }}><ShieldCheck size={20} color="#a855f7" /> Admin Panel</h2>
+          <p>RepairScout platform overview · Humberto Zepeda</p>
+        </div>
+      </div>
+
+      {/* Tab switcher */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 20 }}>
+        {[["overview", isEn ? "Overview" : "Resumen"], ["users", isEn ? "Users" : "Usuarios"], ["quotes", isEn ? "All Quotes" : "Cotizaciones"]].map(([key, label]) => (
+          <button key={key} onClick={() => setActiveTab(key)} style={{
+            padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer",
+            background: activeTab === key ? "#a855f7" : "#1e2d47", color: "#fff",
+          }}>{label}</button>
+        ))}
+      </div>
+
+      {/* ── Overview ── */}
+      {activeTab === "overview" && stats && (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 20 }}>
+            {[
+              ["Total Users", stats.totalUsers, "#a855f7"],
+              ["Shops", stats.shops, "#3b82f6"],
+              ["Drivers", stats.drivers, "#22c55e"],
+              ["Total Quotes", stats.totalQuotes, "#f59e0b"],
+              ["Diagnoses", stats.totalDiagnoses, "#06b6d4"],
+              ["Approved Quotes", stats.approvedQuotes, "#10b981"],
+            ].map(([label, val, color]) => (
+              <div key={label} style={{ ...STAT_DARK, textAlign: "center" }}>
+                <div style={{ fontSize: 28, fontWeight: 800, color }}>{val ?? "—"}</div>
+                <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 4 }}>{label}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ ...STAT_DARK, fontSize: 12, color: "#94a3b8" }}>
+            <strong style={{ color: "#e2e8f0" }}>System</strong>
+            <div style={{ marginTop: 8, display: "flex", gap: 16, flexWrap: "wrap" }}>
+              <span>DB: <strong style={{ color: "#22c55e" }}>Neon PostgreSQL</strong></span>
+              <span>AI: <strong style={{ color: "#22c55e" }}>Active</strong></span>
+              <span>Bland.ai: <strong style={{ color: "#22c55e" }}>Configured</strong></span>
+              <span>Admin: <strong style={{ color: "#a855f7" }}>humberto.wgw@gmail.com</strong></span>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ── Users ── */}
+      {activeTab === "users" && (
+        <div>
+          <p style={{ fontSize: 11, color: "#64748b", marginBottom: 12 }}>{users.length} registered users</p>
+          {users.map((u) => (
+            <div key={u.id} style={{ ...STAT_DARK, display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+              <span style={{ width: 36, height: 36, borderRadius: "50%", background: ROLE_COLOR[u.role] || "#334155", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, color: "#fff", fontSize: 13, flexShrink: 0 }}>
+                {(u.name || u.email).slice(0, 2).toUpperCase()}
+              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, color: "#e2e8f0", fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{u.name || "—"}</div>
+                <div style={{ fontSize: 11, color: "#64748b" }}>{u.email}</div>
+                {u.shopName && <div style={{ fontSize: 10, color: "#94a3b8" }}>{u.shopName}</div>}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: ROLE_COLOR[u.role] + "22", color: ROLE_COLOR[u.role] }}>
+                  {u.role}
+                </span>
+                <select
+                  disabled={roleUpdating === u.id}
+                  value={u.role}
+                  onChange={(e) => changeRole(u.id, e.target.value)}
+                  style={{ background: "#1e2d47", color: "#e2e8f0", border: "1px solid #334155", borderRadius: 4, fontSize: 11, padding: "3px 6px", cursor: "pointer" }}
+                >
+                  <option value="driver">driver</option>
+                  <option value="shop">shop</option>
+                  <option value="admin">admin</option>
+                </select>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── All Quotes ── */}
+      {activeTab === "quotes" && (
+        <div>
+          <p style={{ fontSize: 11, color: "#64748b", marginBottom: 12 }}>{quotes.length} total quote requests</p>
+          {quotes.map((q) => (
+            <div key={q.id} style={{ ...STAT_DARK, marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, color: "#e2e8f0", fontSize: 13 }}>{q.customer}</div>
+                <div style={{ fontSize: 11, color: "#94a3b8" }}>{q.vehicle} · {q.issue}</div>
+                <div style={{ fontSize: 10, color: "#64748b" }}>{q.shopName} · {new Date(q.createdAt).toLocaleDateString()}</div>
+              </div>
+              <div style={{ textAlign: "right", flexShrink: 0 }}>
+                <div style={{ fontWeight: 800, color: "#f1f5f9" }}>{q.estimate}</div>
+                <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: q.status === "Cotizada" ? "#1d4ed822" : "#33415522", color: q.status === "Cotizada" ? "#3b82f6" : "#94a3b8" }}>
+                  {q.status}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -2834,7 +2983,7 @@ function ShopPortal({ user, onRequireAuth }) {
 
   return (
     <main className="shop-shell">
-      <Sidebar active={active} setActive={setActive} shopProfile={shopProfile || profileForm} />
+      <Sidebar active={active} setActive={setActive} shopProfile={shopProfile || profileForm} user={user} />
       <div className="shop-main">
         <header className="shop-header">
           <div>
@@ -2959,6 +3108,8 @@ function ShopPortal({ user, onRequireAuth }) {
           {active === t("tabPiezas") && <PartsSearchPanel />}
 
           {active === t("tabScout") && <ScoutPanel />}
+
+          {active === "Admin" && <AdminPanel />}
         </div>
       </div>
 

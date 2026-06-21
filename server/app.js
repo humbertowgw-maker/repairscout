@@ -7,6 +7,7 @@ import express from "express";
 import { z } from "zod";
 import { authConfigured, createToken, hashPassword, optionalAuth, requireAuth, verifyPassword } from "./auth.js";
 import {
+  adminMigrate,
   approveQuoteByToken,
   completePartsInquiry,
   createItemizedQuote,
@@ -17,18 +18,21 @@ import {
   createVehicle,
   databaseMode,
   findUserByEmail,
+  getAdminStats,
   getItemizedQuoteByToken,
   getPartsInquiryBatch,
   getPartsInquiryById,
   getPendingDiagnosis,
   getPhoneVerification,
   getShopProfile,
+  listAllUsers,
   listQuoteRequests,
   listSentQuotes,
   listVehicles,
   markPhoneUsedFree,
   markPhoneVerified,
   saveDiagnosis,
+  setUserRole,
   setPendingDiagnosisPaid,
   setPendingDiagnosisResult,
   updateBlandCallId,
@@ -962,6 +966,56 @@ app.get("/api/parts/inquiry-batch/:batchId", async (request, response) => {
   const inquiries = await getPartsInquiryBatch(batchId).catch(() => []);
   const done = inquiries.filter((i) => i.status === "completed" || i.status === "failed").length;
   response.json({ inquiries, done, total: inquiries.length, complete: done === inquiries.length });
+});
+
+// ── Admin routes ──────────────────────────────────────────────────────────────
+
+function requireAdmin(request, response, next) {
+  if (!request.user) return response.status(401).json({ error: "Unauthorized." });
+  if (request.user.role !== "admin") return response.status(403).json({ error: "Admin only." });
+  next();
+}
+
+// Run on startup: widen role constraint + promote admin email
+adminMigrate().catch((err) => console.error("[admin migrate]", err.message));
+
+app.get("/api/admin/stats", requireAuth, requireAdmin, async (_req, res) => {
+  try {
+    const stats = await getAdminStats();
+    res.json(stats);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/users", requireAuth, requireAdmin, async (_req, res) => {
+  try {
+    const users = await listAllUsers();
+    res.json({ users });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch("/api/admin/users/:id/role", requireAuth, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { role } = req.body || {};
+  if (!["driver", "shop", "admin"].includes(role)) return res.status(400).json({ error: "Invalid role." });
+  try {
+    const user = await setUserRole(id, role);
+    res.json({ user });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/quotes", requireAuth, requireAdmin, async (_req, res) => {
+  try {
+    const quotes = await listQuoteRequests(null);
+    res.json({ quotes });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 if (process.env.VERCEL !== "1") {

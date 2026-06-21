@@ -150,6 +150,25 @@ export function getDiagnoseResult(pendingId) {
   return request(`/api/diagnose/result/${encodeURIComponent(pendingId)}`);
 }
 
+export function getAdminStats() {
+  return request("/api/admin/stats");
+}
+
+export function getAdminUsers() {
+  return request("/api/admin/users");
+}
+
+export function setAdminUserRole(id, role) {
+  return request(`/api/admin/users/${encodeURIComponent(id)}/role`, {
+    method: "PATCH",
+    body: JSON.stringify({ role }),
+  });
+}
+
+export function getAdminQuotes() {
+  return request("/api/admin/quotes");
+}
+
 export function searchParts(query, lang) {
   return request("/api/parts/search", { method: "POST", body: JSON.stringify({ query, lang }) });
 }

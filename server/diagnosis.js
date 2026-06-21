@@ -3,6 +3,13 @@ import { zodTextFormat } from "openai/helpers/zod";
 import { generateText, Output } from "ai";
 import { z } from "zod";
 
+const ScenarioSchema = z.object({
+  scenario: z.string(),
+  estimatedCost: z.string(),
+  outcome: z.string(),
+  timeframe: z.string(),
+});
+
 const DiagnosisSchema = z.object({
   summary: z.string(),
   safetyLevel: z.enum(["bajo", "moderado", "alto", "crítico"]),
@@ -29,6 +36,8 @@ const DiagnosisSchema = z.object({
     confidence: z.enum(["Baja", "Media", "Alta"]),
     repairLabel: z.string(),
   }),
+  bestCase: ScenarioSchema.optional(),
+  worstCase: ScenarioSchema.optional(),
   questions: z.array(z.string()).max(4),
 });
 
@@ -142,6 +151,18 @@ function extractJson(text, language = "es") {
       confidence: confidences.includes(estimate.confidence) ? estimate.confidence : "Baja",
       repairLabel: String(estimate.repairLabel || (isEn ? "Diagnosis and initial inspection" : "Diagnóstico e inspección inicial")),
     },
+    bestCase: parsed.bestCase ? {
+      scenario: String(parsed.bestCase.scenario || ""),
+      estimatedCost: String(parsed.bestCase.estimatedCost || ""),
+      outcome: String(parsed.bestCase.outcome || ""),
+      timeframe: String(parsed.bestCase.timeframe || ""),
+    } : undefined,
+    worstCase: parsed.worstCase ? {
+      scenario: String(parsed.worstCase.scenario || ""),
+      estimatedCost: String(parsed.worstCase.estimatedCost || ""),
+      outcome: String(parsed.worstCase.outcome || ""),
+      timeframe: String(parsed.worstCase.timeframe || ""),
+    } : undefined,
     questions: (Array.isArray(parsed.questions) ? parsed.questions : [])
       .slice(0, 4)
       .map((question) => String(question)),
@@ -187,12 +208,16 @@ Return only valid JSON, no Markdown. Use exactly this structure:
   "summary": "string",
   "safetyLevel": "bajo|moderado|alto|crítico",
   "safetyMessage": "string",
-  "possibleCauses": [{"probability": 1, "title": "string", "reason": "string", "test": "string", "urgency": "string", "tone": "danger|warn|neutral"}],
+  "possibleCauses": [{"probability": 1, "title": "string", "reason": "string — explain WHY this is likely in 2-3 sentences with specific technical detail", "test": "string — specific diagnostic test or measurement to confirm/rule out", "urgency": "string", "tone": "danger|warn|neutral"}],
   "estimate": {"low": 0, "high": 0, "partsLow": 0, "partsHigh": 0, "laborLow": 0, "laborHigh": 0, "laborHoursLow": 0, "laborHoursHigh": 0, "confidence": "Baja|Media|Alta", "repairLabel": "string"},
-  "questions": ["string"]
+  "bestCase": {"scenario": "string — the mildest/cheapest likely repair", "estimatedCost": "$X–$Y", "outcome": "string — what gets resolved", "timeframe": "string — e.g. same day"},
+  "worstCase": {"scenario": "string — the most extensive repair needed if all related components failed", "estimatedCost": "$X–$Y", "outcome": "string — what could happen if ignored", "timeframe": "string — e.g. 2-3 days"},
+  "questions": ["string — specific question to get more info that would change the diagnosis or estimate"]
 }
 IMPORTANT: safetyLevel must always be one of: bajo, moderado, alto, crítico (these are fixed codes, not translated).
 IMPORTANT: confidence must always be one of: Baja, Media, Alta (fixed codes, not translated).
+possibleCauses reason fields must be detailed and explain the technical connection between symptoms and the cause.
+questions must be targeted follow-up questions that would meaningfully narrow down the diagnosis.
 All other text fields must be written in the language specified in the system prompt.`;
 }
 
@@ -452,18 +477,24 @@ export async function diagnoseVehicle(input) {
   const langLabel = language === "en" ? "English" : "Spanish";
 
   const systemPrompt = language === "en"
-    ? `You are an automotive assistant for RepairScout. Respond in English.
+    ? `You are a senior ASE-certified automotive technician assistant for RepairScout. Respond in English.
 Your assessment is preliminary and must never be presented as a confirmed diagnosis.
-Prioritize safety. Clearly indicate when the vehicle should not be driven.
+Prioritize safety above all. Clearly indicate when the vehicle should not be driven.
 Do not invent technical service bulletins, recalls, exact prices, parts availability, or OEM procedures.
 Probabilities are rough estimates and do not need to sum to 100.
-Costs must be conservative ranges in US dollars based on general independent repair.`
-    : `Eres un asistente automotriz para RepairScout. Responde en español.
+Costs must be conservative ranges in US dollars based on general independent repair.
+For each possible cause, explain the technical reason WHY the described symptoms point to that cause — be specific about the mechanical or electrical relationship. Include how to confirm or rule it out.
+Always provide a realistic best-case and worst-case scenario so the driver knows the cost range they are facing.
+Generate 3–4 targeted follow-up questions that, if answered, would significantly narrow down the diagnosis.`
+    : `Eres un técnico automotriz senior certificado por ASE asistente para RepairScout. Responde en español.
 Tu evaluación es preliminar y nunca debe presentarse como un diagnóstico confirmado.
-Prioriza seguridad. Indica claramente cuándo no se debe conducir.
+Prioriza la seguridad por encima de todo. Indica claramente cuándo no se debe conducir.
 No inventes boletines técnicos, retiros, precios exactos, disponibilidad de piezas ni procedimientos OEM.
 Las probabilidades son estimaciones orientativas y no deben sumar necesariamente 100.
-Los costos deben ser rangos prudentes en dólares estadounidenses basados en reparación independiente general.`;
+Los costos deben ser rangos prudentes en dólares estadounidenses basados en reparación independiente general.
+Para cada posible causa, explica la razón técnica de POR QUÉ los síntomas descritos apuntan a esa causa — sé específico sobre la relación mecánica o eléctrica. Incluye cómo confirmar o descartar la causa.
+Siempre proporciona un escenario realista de mejor y peor caso para que el conductor conozca el rango de costos que enfrenta.
+Genera 3–4 preguntas de seguimiento específicas que, si se responden, reducirían significativamente el diagnóstico.`;
 
   const userPrompt = JSON.stringify({
     vehicle,

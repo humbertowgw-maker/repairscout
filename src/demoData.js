@@ -34,6 +34,8 @@ export const partsResults = [
     distance: "2.4 mi",
     warranty: "Garantía limitada de por vida",
     badge: "Más rápido",
+    stock: 8,
+    phone: "(916) 555-0121",
   },
   {
     seller: "O'Reilly Auto Parts",
@@ -43,6 +45,8 @@ export const partsResults = [
     distance: "3.1 mi",
     warranty: "Garantía limitada de por vida",
     badge: "Mejor precio local",
+    stock: 4,
+    phone: "(916) 555-0188",
   },
   {
     seller: "NAPA Auto Parts",
@@ -52,6 +56,8 @@ export const partsResults = [
     distance: "5.8 mi",
     warranty: "Garantía limitada de por vida",
     badge: "Premium",
+    stock: 1,
+    phone: "(916) 555-0244",
   },
   {
     seller: "RockAuto",
@@ -61,6 +67,8 @@ export const partsResults = [
     distance: "En línea",
     warranty: "90 días",
     badge: "Precio más bajo",
+    stock: null,
+    phone: null,
   },
 ];
 
@@ -168,6 +176,8 @@ export const partsResultsEn = [
     distance: "2.4 mi",
     warranty: "Lifetime limited warranty",
     badge: "Fastest",
+    stock: 8,
+    phone: "(916) 555-0121",
   },
   {
     seller: "O'Reilly Auto Parts",
@@ -177,6 +187,8 @@ export const partsResultsEn = [
     distance: "3.1 mi",
     warranty: "Lifetime limited warranty",
     badge: "Best local price",
+    stock: 4,
+    phone: "(916) 555-0188",
   },
   {
     seller: "NAPA Auto Parts",
@@ -186,6 +198,8 @@ export const partsResultsEn = [
     distance: "5.8 mi",
     warranty: "Lifetime limited warranty",
     badge: "Premium",
+    stock: 1,
+    phone: "(916) 555-0244",
   },
   {
     seller: "RockAuto",
@@ -195,6 +209,8 @@ export const partsResultsEn = [
     distance: "Online",
     warranty: "90 days",
     badge: "Lowest price",
+    stock: null,
+    phone: null,
   },
 ];
 

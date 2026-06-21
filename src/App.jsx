@@ -31,6 +31,7 @@ import {
   Trash2,
   UserRound,
   Users,
+  Copy,
   Wrench,
   X,
 } from "lucide-react";
@@ -418,6 +419,7 @@ function PartsSearchPanel() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState(allParts);
   const [searching, setSearching] = useState(false);
+  const [callScript, setCallScript] = useState(null);
 
   useEffect(() => { setResults(allParts); setQuery(""); }, [lang]);
 
@@ -460,7 +462,8 @@ function PartsSearchPanel() {
           <span>{isEn ? "Seller & Part" : "Vendedor y pieza"}</span>
           <span>{isEn ? "Availability" : "Disponibilidad"}</span>
           <span>{isEn ? "Warranty" : "Garantía"}</span>
-          <span>{isEn ? "Price" : "Precio"}</span>
+          <span>{isEn ? "In Stock" : "En stock"}</span>
+          <span>{isEn ? "Price / Action" : "Precio / Acción"}</span>
         </div>
         {results.map((p, i) => (
           <div className="part-row" key={`${p.seller}-${i}`}>
@@ -469,17 +472,80 @@ function PartsSearchPanel() {
               <span><strong>{p.seller}</strong><small>{p.part}</small><i>{p.badge}</i></span>
             </div>
             <div><strong>{p.availability}</strong><small>{p.distance}</small></div>
-            <div><strong>{p.warranty}</strong><small>{isEn ? "See terms" : "Consulta los términos"}</small></div>
+            <div><strong>{p.warranty}</strong><small>{isEn ? "See terms" : "Ver términos"}</small></div>
+            <div>
+              {p.stock === null
+                ? <strong style={{ color: "#64748b" }}>{isEn ? "Online" : "En línea"}</strong>
+                : p.stock <= 2
+                  ? <strong style={{ color: "#f97316" }}>{p.stock} {isEn ? "left" : "disponible(s)"}</strong>
+                  : <strong style={{ color: "#22c55e" }}>{p.stock} {isEn ? "in stock" : "en stock"}</strong>}
+              {p.stock !== null && <small style={{ fontSize: 9, color: "#94a3b8" }}>{isEn ? "est. qty" : "cant. est."}</small>}
+            </div>
             <div className="part-price">
               ${p.price.toFixed(2)}
-              <button onClick={() => window.open(`https://www.google.com/search?q=${encodeURIComponent(p.part + " " + p.seller)}`, "_blank")}>
-                {isEn ? "View" : "Ver"}
-              </button>
+              <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+                <button onClick={() => window.open(`https://www.google.com/search?q=${encodeURIComponent(p.part + " " + p.seller)}`, "_blank")}>
+                  {isEn ? "View" : "Ver"}
+                </button>
+                {p.phone && (
+                  <button
+                    style={{ color: "#3b82f6", fontWeight: 700 }}
+                    onClick={() => setCallScript({ part: p.part, seller: p.seller, phone: p.phone, vehicle: query || "" })}
+                  >
+                    {isEn ? "Call" : "Llamar"}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         ))}
       </div>
+      {callScript && (
+        <CallScriptModal
+          isEn={isEn}
+          part={callScript.part}
+          seller={callScript.seller}
+          phone={callScript.phone}
+          vehicle={callScript.vehicle}
+          onClose={() => setCallScript(null)}
+        />
+      )}
     </section>
+  );
+}
+
+function CallScriptModal({ isEn, part, seller, phone, vehicle, onClose }) {
+  const script = isEn
+    ? `Hi, I'm calling about a part I need. I'm looking for:\n\n  Part: ${part}\n  Vehicle: ${vehicle || "— please specify year/make/model"}\n\nDo you have this in stock? If so, what's the current price and can I pick it up today?\n\nThank you!`
+    : `Hola, estoy llamando por una pieza que necesito. Busco:\n\n  Pieza: ${part}\n  Vehículo: ${vehicle || "— especificar año/marca/modelo"}\n\n¿Tienen esto en inventario? Si es así, ¿cuál es el precio actual y puedo recogerla hoy?\n\n¡Gracias!`;
+  const [copied, setCopied] = useState(false);
+  const copy = () => { navigator.clipboard.writeText(script); setCopied(true); setTimeout(() => setCopied(false), 2000); };
+
+  return (
+    <div className="modal-backdrop centered" onClick={onClose}>
+      <section className="auth-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
+        <button className="drawer-close" onClick={onClose}><X /></button>
+        <span className="eyebrow dark"><Phone size={14} /> {isEn ? "Call Script" : "Guion de llamada"}</span>
+        <h2 style={{ marginBottom: 4 }}>{seller}</h2>
+        <a href={`tel:${phone}`} style={{ fontSize: 13, color: "#22c55e", fontWeight: 700, display: "block", marginBottom: 16 }}>{phone}</a>
+        <p style={{ fontSize: 11, color: "#64748b", marginBottom: 10 }}>
+          {isEn ? "Read this when you call — or tap the number above to dial:" : "Lee esto cuando llames — o toca el número arriba para marcar:"}
+        </p>
+        <pre style={{
+          background: "#0a1020", border: "1px solid #1e2d47", borderRadius: 8,
+          padding: "14px 16px", fontSize: 12, color: "#e2e8f0", lineHeight: 1.7,
+          whiteSpace: "pre-wrap", fontFamily: "inherit", marginBottom: 14,
+        }}>{script}</pre>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="primary" style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }} onClick={copy}>
+            {copied ? <><Check size={14} /> {isEn ? "Copied!" : "¡Copiado!"}</> : <><Copy size={14} /> {isEn ? "Copy script" : "Copiar guion"}</>}
+          </button>
+          <a href={`tel:${phone}`} className="primary" style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, textDecoration: "none" }}>
+            <Phone size={14} /> {isEn ? "Call now" : "Llamar ahora"}
+          </a>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -489,12 +555,17 @@ const inputStyle = {
   fontFamily: "inherit", outline: "none", display: "block",
 };
 
-function DiagnosisResultCards({ result, lang }) {
+const CARD_DARK = { background: "#0d1829", border: "1px solid #1e2d47", borderRadius: 10, padding: "16px 18px", marginBottom: 10 };
+const TONE_COLOR = { danger: "#ef4444", warn: "#f97316", neutral: "#60a5fa" };
+
+function DiagnosisResultCards({ result, lang, onAskFollowUp }) {
   const t = useT();
+  const isEn = lang === "en";
   const [scoutQuote, setScoutQuote] = useState(null);
   const [scoutQuoteLoading, setScoutQuoteLoading] = useState(false);
   const [selectedOption, setSelectedOption] = useState("combo");
   const [sendOpen, setSendOpen] = useState(false);
+  const [scenarioTab, setScenarioTab] = useState("best");
 
   const buildQuote = async () => {
     setScoutQuoteLoading(true);
@@ -505,48 +576,149 @@ function DiagnosisResultCards({ result, lang }) {
     finally { setScoutQuoteLoading(false); }
   };
 
+  const hasBestWorst = result.bestCase || result.worstCase;
+
   return (
     <div style={{ marginTop: 20 }}>
-      {result.possibleCauses?.map((c, i) => (
-        <article key={c.title} className="card" style={{
-          padding: "14px 16px", marginBottom: 8,
-          border: i === 0 ? "1px solid rgba(249,115,22,.3)" : "1px solid #151c2a",
-        }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-            <strong style={{ fontSize: 13, color: "#f1f5f9" }}>{c.title}</strong>
-            <span style={{
-              fontSize: 10, color: i === 0 ? "#f97316" : "#64748b",
-              border: `1px solid ${i === 0 ? "rgba(249,115,22,.3)" : "#1e2d47"}`,
-              borderRadius: 3, padding: "2px 7px",
-            }}>{c.probability}%</span>
-          </div>
-          <p style={{ fontSize: 11, color: "#64748b", lineHeight: 1.6, marginBottom: 4 }}>{c.reason}</p>
-          {c.test && (
-            <small style={{ fontSize: 10, color: "#475569", display: "flex", alignItems: "center", gap: 4 }}>
-              <Search size={11} /> {t("scoutVerify")} {c.test}
-            </small>
-          )}
-        </article>
-      ))}
-      {result.estimate && (
-        <div className="card" style={{
-          padding: "14px 16px", marginTop: 8,
-          background: "rgba(249,115,22,.04)", border: "1px solid rgba(249,115,22,.12)",
-        }}>
-          <div style={{ fontSize: 10, color: "#f97316", marginBottom: 4, letterSpacing: ".1em" }}>{t("scoutEstimate")}</div>
-          <div style={{ fontSize: 24, fontWeight: 700, color: "#f1f5f9" }}>
-            ${result.estimate.low ?? "—"}–${result.estimate.high ?? "—"}
-          </div>
-          <p style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>{result.estimate.repairLabel}</p>
+      {/* Summary banner */}
+      {result.summary && (
+        <div style={{ ...CARD_DARK, border: "1px solid #334155", marginBottom: 14 }}>
+          <p style={{ fontSize: 13, color: "#cbd5e1", lineHeight: 1.65, margin: 0 }}>{result.summary}</p>
         </div>
       )}
+
+      {/* Possible causes */}
+      <div style={{ fontSize: 10, color: "#64748b", fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 8 }}>
+        {isEn ? "Possible Causes" : "Posibles causas"}
+      </div>
+      {result.possibleCauses?.map((c, i) => (
+        <div key={c.title + i} style={{
+          ...CARD_DARK,
+          borderLeft: `3px solid ${TONE_COLOR[c.tone] ?? "#334155"}`,
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 8 }}>
+            <strong style={{ fontSize: 14, color: "#f8fafc", lineHeight: 1.4, flex: 1 }}>{c.title}</strong>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, flexShrink: 0 }}>
+              <span style={{
+                fontSize: 11, fontWeight: 700, color: TONE_COLOR[c.tone] ?? "#64748b",
+                background: `${TONE_COLOR[c.tone] ?? "#334155"}18`,
+                border: `1px solid ${TONE_COLOR[c.tone] ?? "#334155"}44`,
+                borderRadius: 4, padding: "2px 8px",
+              }}>{c.probability}% {isEn ? "likely" : "probable"}</span>
+              <span style={{ fontSize: 9, color: "#475569", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".05em" }}>{c.urgency}</span>
+            </div>
+          </div>
+          <p style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.7, margin: "0 0 10px" }}>{c.reason}</p>
+          {c.test && (
+            <div style={{ fontSize: 11, color: "#60a5fa", display: "flex", alignItems: "flex-start", gap: 6, background: "rgba(96,165,250,.06)", border: "1px solid rgba(96,165,250,.15)", borderRadius: 6, padding: "8px 10px" }}>
+              <Search size={12} style={{ flexShrink: 0, marginTop: 1 }} />
+              <span><strong style={{ color: "#93c5fd" }}>{t("scoutVerify")}</strong> {c.test}</span>
+            </div>
+          )}
+        </div>
+      ))}
+
+      {/* Estimate */}
+      {result.estimate && (
+        <div style={{ ...CARD_DARK, background: "rgba(249,115,22,.06)", border: "1px solid rgba(249,115,22,.18)", marginTop: 4 }}>
+          <div style={{ fontSize: 9, color: "#f97316", marginBottom: 6, letterSpacing: ".12em", fontWeight: 700, textTransform: "uppercase" }}>{t("scoutEstimate")}</div>
+          <div style={{ fontSize: 28, fontWeight: 800, color: "#fff", letterSpacing: "-1px" }}>
+            ${result.estimate.low ?? "—"} – ${result.estimate.high ?? "—"}
+          </div>
+          <p style={{ fontSize: 11, color: "#94a3b8", marginTop: 6, marginBottom: 8 }}>{result.estimate.repairLabel}</p>
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+            {[
+              [isEn ? "Parts" : "Piezas", `$${result.estimate.partsLow}–$${result.estimate.partsHigh}`],
+              [isEn ? "Labor" : "Mano de obra", `$${result.estimate.laborLow}–$${result.estimate.laborHigh}`],
+              [isEn ? "Labor hrs" : "Horas", `${result.estimate.laborHoursLow}–${result.estimate.laborHoursHigh}h`],
+            ].map(([label, val]) => (
+              <div key={label} style={{ fontSize: 11, color: "#64748b" }}>
+                {label}: <span style={{ color: "#e2e8f0", fontWeight: 600 }}>{val}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Best case / Worst case */}
+      {hasBestWorst && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 10, color: "#64748b", fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 8 }}>
+            {isEn ? "Scenarios" : "Escenarios"}
+          </div>
+          <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+            {result.bestCase && (
+              <button onClick={() => setScenarioTab("best")} style={{
+                padding: "5px 12px", borderRadius: 6, fontSize: 11, fontFamily: "inherit", cursor: "pointer",
+                border: scenarioTab === "best" ? "1px solid #22c55e" : "1px solid #1e2d47",
+                background: scenarioTab === "best" ? "rgba(34,197,94,.1)" : "transparent",
+                color: scenarioTab === "best" ? "#22c55e" : "#64748b",
+              }}>{isEn ? "Best case" : "Mejor caso"}</button>
+            )}
+            {result.worstCase && (
+              <button onClick={() => setScenarioTab("worst")} style={{
+                padding: "5px 12px", borderRadius: 6, fontSize: 11, fontFamily: "inherit", cursor: "pointer",
+                border: scenarioTab === "worst" ? "1px solid #ef4444" : "1px solid #1e2d47",
+                background: scenarioTab === "worst" ? "rgba(239,68,68,.1)" : "transparent",
+                color: scenarioTab === "worst" ? "#ef4444" : "#64748b",
+              }}>{isEn ? "Worst case" : "Peor caso"}</button>
+            )}
+          </div>
+          {scenarioTab === "best" && result.bestCase && (
+            <div style={{ ...CARD_DARK, border: "1px solid rgba(34,197,94,.25)" }}>
+              <div style={{ fontSize: 11, color: "#22c55e", fontWeight: 700, marginBottom: 6 }}>{isEn ? "Best Case" : "Mejor caso"}</div>
+              <div style={{ fontWeight: 600, fontSize: 13, color: "#f8fafc", marginBottom: 4 }}>{result.bestCase.scenario}</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: "#22c55e", marginBottom: 6 }}>{result.bestCase.estimatedCost}</div>
+              <p style={{ fontSize: 12, color: "#94a3b8", margin: "0 0 4px", lineHeight: 1.6 }}>{result.bestCase.outcome}</p>
+              <small style={{ fontSize: 10, color: "#475569" }}>{isEn ? "Timeframe:" : "Tiempo estimado:"} {result.bestCase.timeframe}</small>
+            </div>
+          )}
+          {scenarioTab === "worst" && result.worstCase && (
+            <div style={{ ...CARD_DARK, border: "1px solid rgba(239,68,68,.25)" }}>
+              <div style={{ fontSize: 11, color: "#ef4444", fontWeight: 700, marginBottom: 6 }}>{isEn ? "Worst Case" : "Peor caso"}</div>
+              <div style={{ fontWeight: 600, fontSize: 13, color: "#f8fafc", marginBottom: 4 }}>{result.worstCase.scenario}</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: "#ef4444", marginBottom: 6 }}>{result.worstCase.estimatedCost}</div>
+              <p style={{ fontSize: 12, color: "#94a3b8", margin: "0 0 4px", lineHeight: 1.6 }}>{result.worstCase.outcome}</p>
+              <small style={{ fontSize: 10, color: "#475569" }}>{isEn ? "Timeframe:" : "Tiempo estimado:"} {result.worstCase.timeframe}</small>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Follow-up questions */}
+      {result.questions?.length > 0 && onAskFollowUp && (
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontSize: 10, color: "#64748b", fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 8 }}>
+            {isEn ? "Answer these for a better diagnosis" : "Responde para mejorar el diagnóstico"}
+          </div>
+          <div style={{ ...CARD_DARK, border: "1px solid #1e3a5f" }}>
+            <p style={{ fontSize: 11, color: "#60a5fa", marginBottom: 12 }}>
+              {isEn ? "The AI needs more info to narrow down the cause:" : "La IA necesita más información para precisar la causa:"}
+            </p>
+            {result.questions.map((q, qi) => (
+              <div key={qi} style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: 12, color: "#cbd5e1", display: "block", marginBottom: 5 }}>
+                  {qi + 1}. {q}
+                </label>
+                <input
+                  placeholder={isEn ? "Your answer…" : "Tu respuesta…"}
+                  style={{ ...inputStyle, borderColor: "#1e3a5f" }}
+                  onChange={(e) => onAskFollowUp(qi, e.target.value)}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Build quote */}
       <button
-        className="primary full" style={{ marginTop: 12, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+        className="primary full" style={{ marginTop: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
         onClick={buildQuote} disabled={scoutQuoteLoading}
       >
         {scoutQuoteLoading
-          ? (lang === "en" ? "Building quote…" : "Generando cotización…")
-          : <><PackageSearch size={15} /> {lang === "en" ? "Build Parts Quote" : "Generar cotización de piezas"}</>}
+          ? (isEn ? "Building quote…" : "Generando cotización…")
+          : <><PackageSearch size={15} /> {isEn ? "Build Parts Quote" : "Generar cotización de piezas"}</>}
       </button>
       {scoutQuote && (
         <>
@@ -555,7 +727,7 @@ function DiagnosisResultCards({ result, lang }) {
             <QuoteCard option={scoutQuote.quotes.single} selected={selectedOption === "single"} onSelect={() => setSelectedOption("single")} lang={lang} />
           </div>
           <button className="primary" style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 8 }} onClick={() => setSendOpen(true)}>
-            <Send size={15} /> {lang === "en" ? "Send Quote to Customer" : "Enviar cotización al cliente"}
+            <Send size={15} /> {isEn ? "Send Quote to Customer" : "Enviar cotización al cliente"}
           </button>
           {sendOpen && (
             <SendQuoteModal
@@ -585,6 +757,8 @@ function ScoutPanel() {
   const [query, setQuery] = useState("");
   const [aiResult, setAiResult] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [answers, setAnswers] = useState({});
+  const [refining, setRefining] = useState(false);
 
   // Manual mode state
   const [causes, setCauses] = useState([
@@ -597,13 +771,31 @@ function ScoutPanel() {
 
   const runAI = async () => {
     if (!query.trim()) return;
-    setLoading(true); setAiResult(null);
+    setLoading(true); setAiResult(null); setAnswers({});
     try {
       const r = await createDiagnosis({ vehicle, mileage, description: query, zip: "95814", language: lang });
       setAiResult(r);
     } catch (e) { setAiResult({ error: e.message }); }
     finally { setLoading(false); }
   };
+
+  const refineAI = async () => {
+    const followUpText = Object.entries(answers)
+      .filter(([, v]) => v.trim())
+      .map(([qi, v]) => `Q: ${aiResult.questions[Number(qi)]} A: ${v}`)
+      .join("\n");
+    if (!followUpText) return;
+    setRefining(true);
+    try {
+      const refinedDesc = `${query}\n\nFollow-up answers:\n${followUpText}`;
+      const r = await createDiagnosis({ vehicle, mileage, description: refinedDesc, zip: "95814", language: lang });
+      setAiResult(r);
+      setAnswers({});
+    } catch (e) { setAiResult({ error: e.message }); }
+    finally { setRefining(false); }
+  };
+
+  const handleAnswerChange = (qi, val) => setAnswers((prev) => ({ ...prev, [qi]: val }));
 
   const runManual = () => {
     const filledCauses = causes.filter((c) => c.title.trim());
@@ -646,6 +838,7 @@ function ScoutPanel() {
           <p>{t("scoutDesc")}</p>
         </div>
       </div>
+      <div style={{ padding: "0 20px 24px" }}>
 
       {/* Mode toggle */}
       <div style={{ display: "flex", gap: 6, marginBottom: 18, borderBottom: "1px solid #1e2d47", paddingBottom: 14 }}>
@@ -678,7 +871,23 @@ function ScoutPanel() {
           <button className="primary full" onClick={runAI} disabled={loading || !query.trim()} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
             {loading ? t("scoutAnalyzing") : <><Bot size={16} /> {t("scoutBtn")}</>}
           </button>
-          {aiResult && !aiResult.error && <DiagnosisResultCards result={aiResult} lang={lang} />}
+          {aiResult && !aiResult.error && (
+            <>
+              <DiagnosisResultCards result={aiResult} lang={lang} onAskFollowUp={handleAnswerChange} />
+              {aiResult.questions?.length > 0 && Object.values(answers).some((v) => v.trim()) && (
+                <button
+                  className="primary full"
+                  onClick={refineAI}
+                  disabled={refining}
+                  style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: "#1d4ed8" }}
+                >
+                  {refining
+                    ? (isEn ? "Refining diagnosis…" : "Refinando diagnóstico…")
+                    : <><Sparkles size={15} /> {isEn ? "Refine my diagnosis with these answers →" : "Refinar diagnóstico con estas respuestas →"}</>}
+                </button>
+              )}
+            </>
+          )}
           {aiResult?.error && <p className="form-error" style={{ marginTop: 12 }}>{aiResult.error}</p>}
         </>
       ) : (
@@ -729,6 +938,7 @@ function ScoutPanel() {
           {manualResult && <DiagnosisResultCards result={manualResult} lang={lang} />}
         </>
       )}
+      </div>
     </section>
   );
 }

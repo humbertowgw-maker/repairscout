@@ -179,7 +179,7 @@ select { width: 100%; padding: 10px; }
 .outline.compact { padding: 9px 12px; font-size: 11px; }
 
 .parts-table { background: white; border: 1px solid var(--line); border-radius: 13px; overflow: hidden; }
-.table-head, .part-row { display: grid; grid-template-columns: 2.2fr 1fr 1fr .7fr; gap: 25px; align-items: center; padding: 17px 22px; }
+.table-head, .part-row { display: grid; grid-template-columns: 2fr 0.8fr 0.8fr 0.7fr 1fr; gap: 16px; align-items: center; padding: 17px 22px; }
 .table-head { background: #f7f9f7; border-bottom: 1px solid var(--line); font-size: 10px; font-weight: 800; letter-spacing: 1px; color: #79827d; text-transform: uppercase; }
 .part-row:not(:last-child) { border-bottom: 1px solid #e7ebe8; }
 .part-row > div { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }

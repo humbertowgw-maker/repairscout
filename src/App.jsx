@@ -66,6 +66,7 @@ import {
   verifyOtp,
   startPartsVerification,
   getPartsInquiryBatch,
+  searchParts,
 } from "./api";
 import { T, confidenceDisplay, safetyLevelDisplay, statusDisplay, quoteStatusKeys } from "./i18n";
 
@@ -421,21 +422,25 @@ function PartsSearchPanel() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState(allParts);
   const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState(null);
   const [callScript, setCallScript] = useState(null);
   const [verifyBatchId, setVerifyBatchId] = useState(null);
   const [verifyLoading, setVerifyLoading] = useState(false);
 
-  useEffect(() => { setResults(allParts); setQuery(""); setVerifyBatchId(null); }, [lang]);
+  useEffect(() => { setResults(allParts); setQuery(""); setVerifyBatchId(null); setSearchError(null); }, [lang]);
 
-  const search = () => {
+  const search = async () => {
     if (!query.trim()) { setResults(allParts); return; }
     setSearching(true);
-    setTimeout(() => {
-      const q = query.toLowerCase();
-      const found = allParts.filter((p) => p.part.toLowerCase().includes(q) || p.seller.toLowerCase().includes(q));
-      setResults(found.length ? found : allParts);
+    setSearchError(null);
+    try {
+      const { results: found } = await searchParts(query.trim(), lang);
+      setResults(found && found.length ? found : allParts);
+    } catch (e) {
+      setSearchError(isEn ? "Search failed. Check your connection." : "Error en la búsqueda. Verifica tu conexión.");
+    } finally {
       setSearching(false);
-    }, 400);
+    }
   };
 
   return (
@@ -461,6 +466,7 @@ function PartsSearchPanel() {
           {searching ? (isEn ? "Searching..." : "Buscando...") : <><Search size={15} />{isEn ? "Search" : "Buscar"}</>}
         </button>
       </div>
+      {searchError && <p style={{ color: "#f87171", fontSize: 12, marginBottom: 12 }}>{searchError}</p>}
       <div className="parts-table">
         <div className="table-head">
           <span>{isEn ? "Seller & Part" : "Vendedor y pieza"}</span>

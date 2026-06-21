@@ -150,6 +150,10 @@ export function getDiagnoseResult(pendingId) {
   return request(`/api/diagnose/result/${encodeURIComponent(pendingId)}`);
 }
 
+export function searchParts(query, lang) {
+  return request("/api/parts/search", { method: "POST", body: JSON.stringify({ query, lang }) });
+}
+
 export function startPartsVerification(payload) {
   return request("/api/parts/verify", { method: "POST", body: JSON.stringify(payload) });
 }

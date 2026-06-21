@@ -689,6 +689,110 @@ app.get("/api/diagnose/result/:id", async (request, response) => {
   return response.json({ ready: true, paid: true, result: pending.result, vehicle: pending.vehicle });
 });
 
+// ── Parts search (AI-generated store results) ─────────────────────────────────
+
+app.post("/api/parts/search", rateLimit({ key: "parts-search", windowMs: 60 * 1000, max: 20 }), async (request, response) => {
+  const { query, lang } = request.body || {};
+  if (!query || typeof query !== "string" || query.trim().length < 2) {
+    return response.status(400).json({ error: "Query required." });
+  }
+
+  const isEs = lang === "es";
+  const stores = [
+    { name: "AutoZone", phone: "(916) 555-0121" },
+    { name: "O'Reilly Auto Parts", phone: "(916) 555-0188" },
+    { name: "NAPA Auto Parts", phone: "(916) 555-0244" },
+    { name: "Advance Auto Parts", phone: "(916) 555-0312" },
+    { name: "RockAuto", phone: null },
+  ];
+
+  const systemPrompt = isEs
+    ? `Eres un experto en autopartes. Para la búsqueda dada, devuelve resultados realistas de disponibilidad en tiendas locales. Responde SOLO con JSON válido.`
+    : `You are an auto parts expert. For the given search query, return realistic availability results across local auto parts stores. Respond ONLY with valid JSON.`;
+
+  const userPrompt = isEs
+    ? `Búsqueda: "${query.trim()}"\n\nDevuelve un array JSON "results" con entradas para estas tiendas: AutoZone, O'Reilly Auto Parts, NAPA Auto Parts, Advance Auto Parts, RockAuto.\n\nCada entrada debe tener:\n- part: nombre exacto de la pieza (string)\n- seller: nombre de la tienda (string)\n- price: precio realista en dólares como "$XX.XX" (string)\n- stock: unidades estimadas en inventario (número, null para RockAuto)\n- phone: número de teléfono de la tienda (string, null para RockAuto)\n- url: null\n\nSi la pieza normalmente no estaría en una tienda específica, pon stock: 0. RockAuto siempre tiene stock abundante pero sin teléfono. Sé realista con los precios según el tipo de pieza y el vehículo.`
+    : `Search: "${query.trim()}"\n\nReturn a JSON array "results" with entries for these stores: AutoZone, O'Reilly Auto Parts, NAPA Auto Parts, Advance Auto Parts, RockAuto.\n\nEach entry must have:\n- part: exact part name matching the search (string)\n- seller: store name (string)\n- price: realistic price as "$XX.XX" (string)\n- stock: estimated units in stock (number, null for RockAuto)\n- phone: store phone number (string, null for RockAuto)\n- url: null\n\nIf the part would not normally be stocked at a specific store, set stock: 0. RockAuto always has stock but no phone. Be realistic with pricing based on part type and vehicle year/make/model.`;
+
+  try {
+    const { diagnoseWithGroqRaw, callAIRaw } = await import("./diagnosis.js").catch(() => null) || {};
+
+    // Use whichever AI provider is configured
+    const providerOrder = (process.env.AI_PROVIDER_ORDER || "groq,gemini,openrouter").split(",").map(s => s.trim());
+    let raw = null;
+
+    for (const provider of providerOrder) {
+      try {
+        if (provider === "groq" && process.env.GROQ_API_KEY) {
+          const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
+              messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }],
+              temperature: 0.3, max_tokens: 800, response_format: { type: "json_object" },
+            }),
+          });
+          const data = await res.json();
+          raw = data?.choices?.[0]?.message?.content;
+          if (raw) break;
+        } else if (provider === "gemini" && (process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY)) {
+          const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+          const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }],
+              generationConfig: { temperature: 0.3, maxOutputTokens: 800, responseMimeType: "application/json" },
+            }),
+          });
+          const data = await res.json();
+          raw = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (raw) break;
+        } else if (provider === "openrouter" && process.env.OPENROUTER_API_KEY) {
+          const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: process.env.OPENROUTER_MODEL || "openrouter/free",
+              messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }],
+              temperature: 0.3, max_tokens: 800,
+            }),
+          });
+          const data = await res.json();
+          raw = data?.choices?.[0]?.message?.content;
+          if (raw) break;
+        }
+      } catch { continue; }
+    }
+
+    if (!raw) return response.status(503).json({ error: "AI provider unavailable." });
+
+    let parsed;
+    try {
+      const match = raw.match(/\{[\s\S]*\}/);
+      parsed = JSON.parse(match ? match[0] : raw);
+    } catch {
+      return response.status(500).json({ error: "Failed to parse AI response." });
+    }
+
+    const results = (parsed.results || []).map((r) => ({
+      part: r.part || query.trim(),
+      seller: r.seller || "Unknown",
+      price: r.price || "—",
+      stock: r.stock ?? null,
+      phone: r.phone || null,
+      url: null,
+    }));
+
+    return response.json({ results });
+  } catch (err) {
+    console.error("[parts-search]", err.message);
+    return response.status(500).json({ error: "Search failed." });
+  }
+});
+
 // ── Bland.ai parts verification ───────────────────────────────────────────────
 
 const verifySchema = z.object({

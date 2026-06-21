@@ -2986,6 +2986,9 @@ function ShopPortal({ user, onRequireAuth }) {
   const [shopSendQuoteOpen, setShopSendQuoteOpen] = useState(false);
   const [shopQuoteData, setShopQuoteData] = useState(null);
   const [shopQuoteBuilding, setShopQuoteBuilding] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [notifOpen, setNotifOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -3065,10 +3068,43 @@ function ShopPortal({ user, onRequireAuth }) {
             <span className="breadcrumb">{t("shopPortalBreadcrumb")} / {active}</span>
             <h1>{active === "Resumen" || active === "Overview" ? `${t("goodMorning")}${user?.name ? `, ${user.name.split(" ")[0]}` : ""}` : active}</h1>
           </div>
-          <div className="shop-header-actions">
+          <div className="shop-header-actions" style={{ position: "relative" }}>
             {!user && <button className="outline compact" onClick={onRequireAuth}>{t("signInCreate")}</button>}
-            <button className="icon-button"><Search size={19} /></button>
-            <button className="icon-button"><Bell size={19} /><i /></button>
+            <button className="icon-button" onClick={() => { setSearchOpen(true); setNotifOpen(false); }}><Search size={19} /></button>
+            <div style={{ position: "relative" }}>
+              <button className="icon-button" onClick={() => { setNotifOpen((o) => !o); setSearchOpen(false); }}>
+                <Bell size={19} />
+                {savedRequests.filter((r) => r.status === "Pendiente" || r.status === "Pending").length > 0 && (
+                  <i style={{ position: "absolute", top: 4, right: 4, width: 8, height: 8, borderRadius: "50%", background: "#ef4444", border: "2px solid #fff", display: "block" }} />
+                )}
+              </button>
+              {notifOpen && (
+                <div style={{ position: "absolute", right: 0, top: "calc(100% + 8px)", width: 300, background: "#0d1829", border: "1px solid #1e2d47", borderRadius: 10, boxShadow: "0 8px 32px #0008", zIndex: 200, overflow: "hidden" }}>
+                  <div style={{ padding: "12px 14px 8px", borderBottom: "1px solid #1e2d47", fontWeight: 700, fontSize: 12, color: "#e2e8f0", display: "flex", justifyContent: "space-between" }}>
+                    {isEn ? "Notifications" : "Notificaciones"}
+                    <button onClick={() => setNotifOpen(false)} style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: 16, lineHeight: 1 }}>×</button>
+                  </div>
+                  <div style={{ maxHeight: 320, overflowY: "auto" }}>
+                    {visibleRequests.slice(0, 8).map((r) => (
+                      <button key={r.id || r.customer} onClick={() => { setSelectedRequest(r); setNotifOpen(false); }} style={{ width: "100%", background: "none", border: "none", borderBottom: "1px solid #1e2d4744", padding: "10px 14px", textAlign: "left", cursor: "pointer", display: "flex", gap: 10, alignItems: "center" }}>
+                        <span style={{ width: 32, height: 32, borderRadius: "50%", background: "#1e3a5f", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, color: "#93c5fd", fontSize: 11, flexShrink: 0 }}>{r.initials}</span>
+                        <span style={{ flex: 1, minWidth: 0 }}>
+                          <span style={{ display: "block", fontWeight: 600, color: "#e2e8f0", fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.customer}</span>
+                          <span style={{ display: "block", fontSize: 10, color: "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.vehicle} · {r.issue}</span>
+                        </span>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: "#f1f5f9", flexShrink: 0 }}>{r.value || r.estimate}</span>
+                      </button>
+                    ))}
+                    {visibleRequests.length === 0 && <p style={{ padding: "16px 14px", fontSize: 12, color: "#64748b" }}>{isEn ? "No new notifications" : "Sin notificaciones"}</p>}
+                  </div>
+                  <div style={{ padding: "8px 14px", borderTop: "1px solid #1e2d47" }}>
+                    <button onClick={() => { setActiveKey("tabSolicitudes"); setNotifOpen(false); }} style={{ background: "none", border: "none", color: "#3b82f6", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>
+                      {isEn ? "View all requests →" : "Ver todas las solicitudes →"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
             <span className="avatar">{user?.name ? user.name.split(/\s+/).slice(0, 2).map((p) => p[0]).join("").toUpperCase() : "RS"}</span>
           </div>
         </header>
@@ -3238,6 +3274,52 @@ function ShopPortal({ user, onRequireAuth }) {
 
       {bookingOpen && <BookingModal onClose={() => setBookingOpen(false)} />}
       {messageOpen && <MessageModal request={messageTarget} onClose={() => { setMessageOpen(false); setMessageTarget(null); }} />}
+
+      {/* ── Global search overlay ── */}
+      {searchOpen && (
+        <div style={{ position: "fixed", inset: 0, background: "#000a", zIndex: 300, display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: 80 }}
+          onClick={(e) => { if (e.target === e.currentTarget) setSearchOpen(false); }}>
+          <div style={{ background: "#0d1829", border: "1px solid #1e2d47", borderRadius: 12, width: "100%", maxWidth: 520, boxShadow: "0 16px 48px #0009", overflow: "hidden" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderBottom: "1px solid #1e2d47" }}>
+              <Search size={16} color="#64748b" />
+              <input
+                autoFocus
+                placeholder={isEn ? "Search customers, vehicles, quotes…" : "Buscar clientes, vehículos, cotizaciones…"}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                style={{ flex: 1, background: "none", border: "none", color: "#e2e8f0", fontSize: 14, outline: "none", fontFamily: "inherit" }}
+              />
+              <button onClick={() => setSearchOpen(false)} style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: 18, lineHeight: 1 }}>×</button>
+            </div>
+            <div style={{ maxHeight: 360, overflowY: "auto" }}>
+              {visibleRequests
+                .filter((r) => {
+                  const q = searchQuery.toLowerCase();
+                  return !q || r.customer?.toLowerCase().includes(q) || r.vehicle?.toLowerCase().includes(q) || r.issue?.toLowerCase().includes(q) || r.estimate?.toLowerCase().includes(q);
+                })
+                .slice(0, 10)
+                .map((r) => (
+                  <button key={r.id || r.customer} onClick={() => { setSelectedRequest(r); setSearchOpen(false); setSearchQuery(""); }}
+                    style={{ width: "100%", background: "none", border: "none", borderBottom: "1px solid #1e2d4744", padding: "12px 16px", textAlign: "left", cursor: "pointer", display: "flex", gap: 12, alignItems: "center" }}>
+                    <span style={{ width: 36, height: 36, borderRadius: "50%", background: "#1e3a5f", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, color: "#93c5fd", fontSize: 12, flexShrink: 0 }}>{r.initials}</span>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: "block", fontWeight: 700, color: "#e2e8f0", fontSize: 13 }}>{r.customer}</span>
+                      <span style={{ display: "block", fontSize: 11, color: "#94a3b8" }}>{r.vehicle}</span>
+                      <span style={{ display: "block", fontSize: 10, color: "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.issue}</span>
+                    </span>
+                    <span style={{ fontWeight: 800, color: "#f1f5f9", fontSize: 13, flexShrink: 0 }}>{r.value || r.estimate}</span>
+                  </button>
+                ))}
+              {searchQuery && visibleRequests.filter((r) => {
+                const q = searchQuery.toLowerCase();
+                return r.customer?.toLowerCase().includes(q) || r.vehicle?.toLowerCase().includes(q) || r.issue?.toLowerCase().includes(q);
+              }).length === 0 && (
+                <p style={{ padding: "20px 16px", fontSize: 12, color: "#64748b" }}>{isEn ? "No results found." : "Sin resultados."}</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       {shopSendQuoteOpen && shopQuoteData && (
         <SendQuoteModal
           quoteData={shopQuoteData}

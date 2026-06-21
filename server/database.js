@@ -127,6 +127,27 @@ async function ensureDatabase() {
       completed_at timestamptz,
       created_at timestamptz not null default now()
     );
+
+    create table if not exists parts_inquiries (
+      id uuid primary key,
+      batch_id uuid not null,
+      part_name text not null,
+      vehicle text,
+      store_name text not null,
+      store_phone text not null,
+      bland_call_id text,
+      status text not null default 'pending',
+      has_part boolean,
+      quantity int,
+      price text,
+      pickup_today boolean,
+      transcript text,
+      summary text,
+      created_at timestamptz not null default now(),
+      completed_at timestamptz
+    );
+
+    create index if not exists parts_inquiries_batch_id on parts_inquiries(batch_id);
   `);
 
   initialized = true;
@@ -690,4 +711,115 @@ export async function setPendingDiagnosisResult(id, result) {
       [id]: { ...(store.pendingDiagnoses?.[id] || {}), result, completedAt: now },
     },
   }));
+}
+
+// ── Parts inquiries (Bland.ai call tracking) ──────────────────────────────────
+
+function mapInquiryRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    batchId: row.batch_id,
+    partName: row.part_name,
+    vehicle: row.vehicle,
+    storeName: row.store_name,
+    storePhone: row.store_phone,
+    blandCallId: row.bland_call_id,
+    status: row.status,
+    hasPart: row.has_part,
+    quantity: row.quantity,
+    price: row.price,
+    pickupToday: row.pickup_today,
+    transcript: row.transcript,
+    summary: row.summary,
+    createdAt: row.created_at,
+    completedAt: row.completed_at,
+  };
+}
+
+export async function createPartsInquiries(records) {
+  if (pool) {
+    await ensureDatabase();
+    const inserted = [];
+    for (const r of records) {
+      const res = await pool.query(
+        `insert into parts_inquiries (id, batch_id, part_name, vehicle, store_name, store_phone, status)
+         values ($1,$2,$3,$4,$5,$6,'pending') returning *`,
+        [r.id, r.batchId, r.partName, r.vehicle || null, r.storeName, r.storePhone],
+      );
+      inserted.push(mapInquiryRow(res.rows[0]));
+    }
+    return inserted;
+  }
+  await updateStore((store) => {
+    const next = { ...(store.partsInquiries || {}) };
+    for (const r of records) next[r.id] = { ...r, status: "pending" };
+    return { ...store, partsInquiries: next };
+  });
+  return records.map((r) => ({ ...r, status: "pending" }));
+}
+
+export async function updateBlandCallId(inquiryId, blandCallId) {
+  if (pool) {
+    await ensureDatabase();
+    await pool.query(
+      "update parts_inquiries set bland_call_id=$2, status='calling' where id=$1",
+      [inquiryId, blandCallId],
+    );
+    return;
+  }
+  await updateStore((store) => ({
+    ...store,
+    partsInquiries: {
+      ...(store.partsInquiries || {}),
+      [inquiryId]: { ...(store.partsInquiries?.[inquiryId] || {}), blandCallId, status: "calling" },
+    },
+  }));
+}
+
+export async function completePartsInquiry(inquiryId, { status, hasPart, quantity, price, pickupToday, transcript, summary }) {
+  const now = new Date().toISOString();
+  if (pool) {
+    await ensureDatabase();
+    await pool.query(
+      `update parts_inquiries set status=$2, has_part=$3, quantity=$4, price=$5,
+       pickup_today=$6, transcript=$7, summary=$8, completed_at=$9 where id=$1`,
+      [inquiryId, status, hasPart ?? null, quantity ?? null, price ?? null,
+       pickupToday ?? null, transcript || null, summary || null, now],
+    );
+    return;
+  }
+  await updateStore((store) => ({
+    ...store,
+    partsInquiries: {
+      ...(store.partsInquiries || {}),
+      [inquiryId]: {
+        ...(store.partsInquiries?.[inquiryId] || {}),
+        status, hasPart, quantity, price, pickupToday, transcript, summary, completedAt: now,
+      },
+    },
+  }));
+}
+
+export async function getPartsInquiryBatch(batchId) {
+  if (pool) {
+    await ensureDatabase();
+    const res = await pool.query(
+      "select * from parts_inquiries where batch_id=$1 order by created_at",
+      [batchId],
+    );
+    return res.rows.map(mapInquiryRow);
+  }
+  const store = await readStore();
+  return Object.values(store.partsInquiries || {}).filter((r) => r.batchId === batchId);
+}
+
+export async function getPartsInquiryById(inquiryId) {
+  if (pool) {
+    await ensureDatabase();
+    const res = await pool.query("select * from parts_inquiries where id=$1", [inquiryId]);
+    return mapInquiryRow(res.rows[0]);
+  }
+  const store = await readStore();
+  return store.partsInquiries?.[inquiryId] || null;
 }

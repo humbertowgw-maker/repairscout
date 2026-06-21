@@ -8,7 +8,9 @@ import { z } from "zod";
 import { authConfigured, createToken, hashPassword, optionalAuth, requireAuth, verifyPassword } from "./auth.js";
 import {
   approveQuoteByToken,
+  completePartsInquiry,
   createItemizedQuote,
+  createPartsInquiries,
   createPendingDiagnosis,
   createQuoteRequest,
   createUser,
@@ -16,6 +18,8 @@ import {
   databaseMode,
   findUserByEmail,
   getItemizedQuoteByToken,
+  getPartsInquiryBatch,
+  getPartsInquiryById,
   getPendingDiagnosis,
   getPhoneVerification,
   getShopProfile,
@@ -27,6 +31,7 @@ import {
   saveDiagnosis,
   setPendingDiagnosisPaid,
   setPendingDiagnosisResult,
+  updateBlandCallId,
   updateQuoteRequestStatus,
   updateRepairStage,
   upsertPhoneVerification,
@@ -38,6 +43,7 @@ import { sendQuoteNotification } from "./notify.js";
 import { searchRepairShops } from "./shops.js";
 import { generateOtp, normalizePhone, OTP_TTL_MS, sendOtpSms } from "./otp.js";
 import { constructWebhookEvent, createDiagnosisCheckout } from "./stripe.js";
+import { blandConfigured, parseBlandWebhook, simulatedCallResult, startPartInquiryCall } from "./bland.js";
 
 const app = express();
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
@@ -681,6 +687,119 @@ app.get("/api/diagnose/result/:id", async (request, response) => {
   if (!pending.paid) return response.status(402).json({ error: "Pago pendiente.", pending: true });
   if (!pending.result) return response.json({ ready: false, paid: true });
   return response.json({ ready: true, paid: true, result: pending.result, vehicle: pending.vehicle });
+});
+
+// ── Bland.ai parts verification ───────────────────────────────────────────────
+
+const verifySchema = z.object({
+  parts: z.array(z.object({
+    partName: z.string().min(1),
+    vehicle: z.string().optional(),
+    stores: z.array(z.object({
+      name: z.string(),
+      phone: z.string(),
+    })).min(1).max(10),
+  })).min(1).max(5),
+});
+
+app.post("/api/parts/verify", rateLimit({ key: "bland", windowMs: 60 * 1000, max: 10 }), async (request, response) => {
+  const parsed = verifySchema.safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: "Invalid request." });
+
+  const batchId = crypto.randomUUID();
+  const webhookUrl = `${process.env.APP_URL || "https://repairscout-smoky.vercel.app"}/api/bland/webhook`;
+
+  // Build all inquiry records upfront
+  const records = [];
+  for (const part of parsed.data.parts) {
+    for (const store of part.stores) {
+      records.push({
+        id: crypto.randomUUID(),
+        batchId,
+        partName: part.partName,
+        vehicle: part.vehicle || null,
+        storeName: store.name,
+        storePhone: store.phone,
+      });
+    }
+  }
+
+  await createPartsInquiries(records);
+
+  // Fire calls in background — don't await, respond immediately
+  (async () => {
+    for (const rec of records) {
+      try {
+        if (blandConfigured()) {
+          const call = await startPartInquiryCall({
+            inquiryId: rec.id,
+            partName: rec.partName,
+            vehicle: rec.vehicle,
+            storeName: rec.storeName,
+            storePhone: rec.storePhone,
+            webhookUrl,
+          });
+          await updateBlandCallId(rec.id, call.call_id);
+        } else {
+          // Dev simulation: update immediately after short delay
+          await updateBlandCallId(rec.id, `sim_${rec.id}`);
+          const delay = 3000 + Math.random() * 5000;
+          setTimeout(async () => {
+            const sim = simulatedCallResult(rec.id);
+            await completePartsInquiry(rec.id, {
+              status: "completed",
+              hasPart: sim.analysis.has_part,
+              quantity: sim.analysis.quantity,
+              price: sim.analysis.price,
+              pickupToday: sim.analysis.pickup_today,
+              transcript: sim.transcript,
+              summary: sim.summary,
+            });
+          }, delay);
+        }
+      } catch (err) {
+        console.error(`[bland] call failed for ${rec.storeName}:`, err.message);
+        await completePartsInquiry(rec.id, { status: "failed" });
+      }
+    }
+  })();
+
+  response.json({ batchId, total: records.length });
+});
+
+// Bland.ai webhook — called when each call finishes
+app.post("/api/bland/webhook", async (request, response) => {
+  response.json({ received: true }); // respond fast
+
+  try {
+    const parsed = parseBlandWebhook(request.body);
+    if (!parsed.inquiryId) return;
+
+    const inquiry = await getPartsInquiryById(parsed.inquiryId).catch(() => null);
+    if (!inquiry) return;
+
+    const a = parsed.analysis;
+    await completePartsInquiry(parsed.inquiryId, {
+      status: parsed.status === "completed" ? "completed" : "failed",
+      hasPart: a.has_part ?? null,
+      quantity: typeof a.quantity === "number" ? a.quantity : null,
+      price: a.price || null,
+      pickupToday: a.pickup_today ?? null,
+      transcript: parsed.transcript,
+      summary: parsed.summary,
+    });
+  } catch (err) {
+    console.error("[bland/webhook] error:", err.message);
+  }
+});
+
+// Poll batch status
+app.get("/api/parts/inquiry-batch/:batchId", async (request, response) => {
+  const { batchId } = request.params;
+  if (!batchId) return response.status(400).json({ error: "Missing batchId." });
+  const inquiries = await getPartsInquiryBatch(batchId).catch(() => []);
+  const done = inquiries.filter((i) => i.status === "completed" || i.status === "failed").length;
+  response.json({ inquiries, done, total: inquiries.length, complete: done === inquiries.length });
 });
 
 if (process.env.VERCEL !== "1") {

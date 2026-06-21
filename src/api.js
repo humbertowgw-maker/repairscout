@@ -149,3 +149,11 @@ export function startCheckout(input) {
 export function getDiagnoseResult(pendingId) {
   return request(`/api/diagnose/result/${encodeURIComponent(pendingId)}`);
 }
+
+export function startPartsVerification(payload) {
+  return request("/api/parts/verify", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function getPartsInquiryBatch(batchId) {
+  return request(`/api/parts/inquiry-batch/${encodeURIComponent(batchId)}`);
+}

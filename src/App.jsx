@@ -64,6 +64,8 @@ import {
   updateQuoteRequestStatus,
   updateRepairStage,
   verifyOtp,
+  startPartsVerification,
+  getPartsInquiryBatch,
 } from "./api";
 import { T, confidenceDisplay, safetyLevelDisplay, statusDisplay, quoteStatusKeys } from "./i18n";
 
@@ -420,8 +422,10 @@ function PartsSearchPanel() {
   const [results, setResults] = useState(allParts);
   const [searching, setSearching] = useState(false);
   const [callScript, setCallScript] = useState(null);
+  const [verifyBatchId, setVerifyBatchId] = useState(null);
+  const [verifyLoading, setVerifyLoading] = useState(false);
 
-  useEffect(() => { setResults(allParts); setQuery(""); }, [lang]);
+  useEffect(() => { setResults(allParts); setQuery(""); setVerifyBatchId(null); }, [lang]);
 
   const search = () => {
     if (!query.trim()) { setResults(allParts); return; }
@@ -500,6 +504,37 @@ function PartsSearchPanel() {
           </div>
         ))}
       </div>
+      {/* Bland.ai verify button — only show for results that have phone numbers */}
+      {results.some((p) => p.phone) && (
+        <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid #e7ebe8" }}>
+          <button
+            className="primary"
+            disabled={verifyLoading}
+            onClick={async () => {
+              setVerifyLoading(true);
+              try {
+                const stores = results.filter((p) => p.phone).map((p) => ({ name: p.seller, phone: p.phone }));
+                const partName = results[0]?.part || (isEn ? "Auto part" : "Pieza automotriz");
+                const { batchId } = await startPartsVerification({ parts: [{ partName, vehicle: query || undefined, stores }] });
+                setVerifyBatchId(batchId);
+              } catch (e) { console.error(e); }
+              finally { setVerifyLoading(false); }
+            }}
+            style={{ display: "flex", alignItems: "center", gap: 8, background: "#1d4ed8" }}
+          >
+            <Phone size={15} />
+            {verifyLoading
+              ? (isEn ? "Starting calls…" : "Iniciando llamadas…")
+              : (isEn ? "Verify availability via AI calls" : "Verificar disponibilidad con llamadas IA")}
+          </button>
+          <p style={{ fontSize: 10, color: "#94a3b8", marginTop: 6 }}>
+            {isEn
+              ? "Bland.ai will call each local store and report back on stock, price, and pickup availability."
+              : "Bland.ai llamará a cada tienda local y reportará existencias, precio y disponibilidad de recogida."}
+          </p>
+        </div>
+      )}
+
       {callScript && (
         <CallScriptModal
           isEn={isEn}
@@ -510,7 +545,122 @@ function PartsSearchPanel() {
           onClose={() => setCallScript(null)}
         />
       )}
+      {verifyBatchId && (
+        <PartsVerificationModal
+          isEn={isEn}
+          batchId={verifyBatchId}
+          onClose={() => setVerifyBatchId(null)}
+        />
+      )}
     </section>
+  );
+}
+
+function PartsVerificationModal({ isEn, batchId, parts, onClose }) {
+  const [data, setData] = useState({ inquiries: [], done: 0, total: 0, complete: false });
+  const pollRef = React.useRef(null);
+
+  useEffect(() => {
+    let active = true;
+    const poll = async () => {
+      try {
+        const result = await getPartsInquiryBatch(batchId);
+        if (!active) return;
+        setData(result);
+        if (!result.complete) pollRef.current = setTimeout(poll, 3000);
+      } catch { /* retry */ if (!active) return; pollRef.current = setTimeout(poll, 5000); }
+    };
+    poll();
+    return () => { active = false; clearTimeout(pollRef.current); };
+  }, [batchId]);
+
+  const statusIcon = (s) => {
+    if (s === "completed") return null;
+    if (s === "failed") return "✗";
+    if (s === "calling") return "📞";
+    return "⏳";
+  };
+
+  const grouped = {};
+  for (const inq of data.inquiries) {
+    if (!grouped[inq.partName]) grouped[inq.partName] = [];
+    grouped[inq.partName].push(inq);
+  }
+
+  return (
+    <div className="modal-backdrop centered" onClick={onClose}>
+      <section className="auth-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560, padding: 28 }}>
+        <button className="drawer-close" onClick={onClose}><X /></button>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+          <span style={{ fontSize: 22 }}>📞</span>
+          <div>
+            <h2 style={{ margin: 0, fontSize: 16 }}>{isEn ? "AI Parts Verification" : "Verificación de piezas con IA"}</h2>
+            <p style={{ margin: 0, fontSize: 11, color: "#64748b" }}>
+              {data.complete
+                ? (isEn ? "All calls completed." : "Todas las llamadas completadas.")
+                : (isEn ? `Calling stores… ${data.done}/${data.total} done` : `Llamando tiendas… ${data.done}/${data.total} listas`)}
+            </p>
+          </div>
+        </div>
+
+        {/* Progress bar */}
+        <div style={{ height: 4, background: "#1e2d47", borderRadius: 2, marginBottom: 20 }}>
+          <div style={{ height: "100%", background: "#22c55e", borderRadius: 2, transition: "width .4s", width: data.total ? `${(data.done / data.total) * 100}%` : "0%" }} />
+        </div>
+
+        {Object.entries(grouped).map(([partName, inquiries]) => (
+          <div key={partName} style={{ marginBottom: 20 }}>
+            <div style={{ fontSize: 11, color: "#f97316", fontWeight: 700, marginBottom: 10, textTransform: "uppercase", letterSpacing: ".07em" }}>
+              {partName}
+            </div>
+            {inquiries.map((inq) => (
+              <div key={inq.id} style={{
+                background: "#0d1829", border: `1px solid ${inq.status === "completed" && inq.hasPart ? "rgba(34,197,94,.3)" : inq.status === "completed" ? "rgba(239,68,68,.2)" : "#1e2d47"}`,
+                borderRadius: 8, padding: "12px 14px", marginBottom: 8,
+                display: "flex", alignItems: "flex-start", gap: 12,
+              }}>
+                <div style={{ fontSize: 18, flexShrink: 0, marginTop: 2 }}>
+                  {inq.status === "completed"
+                    ? (inq.hasPart ? "✅" : "❌")
+                    : statusIcon(inq.status)}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: "#f8fafc", marginBottom: 3 }}>{inq.storeName}</div>
+                  {inq.status === "pending" && (
+                    <div style={{ fontSize: 11, color: "#475569" }}>{isEn ? "Waiting to call…" : "Esperando llamada…"}</div>
+                  )}
+                  {inq.status === "calling" && (
+                    <div style={{ fontSize: 11, color: "#60a5fa" }}>{isEn ? "On the line now…" : "En llamada ahora…"}</div>
+                  )}
+                  {inq.status === "completed" && inq.hasPart && (
+                    <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 2 }}>
+                      {inq.quantity != null && <span style={{ fontSize: 11, color: "#22c55e" }}>{inq.quantity} {isEn ? "in stock" : "en stock"}</span>}
+                      {inq.price && <span style={{ fontSize: 12, fontWeight: 700, color: "#f8fafc" }}>{inq.price}</span>}
+                      {inq.pickupToday && <span style={{ fontSize: 10, background: "rgba(34,197,94,.12)", border: "1px solid rgba(34,197,94,.3)", color: "#22c55e", borderRadius: 4, padding: "1px 7px" }}>{isEn ? "Pickup today" : "Recogida hoy"}</span>}
+                    </div>
+                  )}
+                  {inq.status === "completed" && !inq.hasPart && (
+                    <div style={{ fontSize: 11, color: "#ef4444" }}>{isEn ? "Not in stock" : "Sin existencias"}</div>
+                  )}
+                  {inq.status === "failed" && (
+                    <div style={{ fontSize: 11, color: "#f97316" }}>{isEn ? "Call could not be completed" : "No se pudo completar la llamada"}</div>
+                  )}
+                  {inq.summary && inq.status === "completed" && (
+                    <div style={{ fontSize: 10, color: "#475569", marginTop: 6, lineHeight: 1.5 }}>{inq.summary}</div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        ))}
+
+        {data.complete && (
+          <button className="primary full" onClick={onClose} style={{ marginTop: 8 }}>
+            {isEn ? "Close" : "Cerrar"}
+          </button>
+        )}
+      </section>
+    </div>
   );
 }
 
@@ -566,6 +716,8 @@ function DiagnosisResultCards({ result, lang, onAskFollowUp }) {
   const [selectedOption, setSelectedOption] = useState("combo");
   const [sendOpen, setSendOpen] = useState(false);
   const [scenarioTab, setScenarioTab] = useState("best");
+  const [verifyBatchId, setVerifyBatchId] = useState(null);
+  const [verifyLoading, setVerifyLoading] = useState(false);
 
   const buildQuote = async () => {
     setScoutQuoteLoading(true);
@@ -726,9 +878,33 @@ function DiagnosisResultCards({ result, lang, onAskFollowUp }) {
             <QuoteCard option={scoutQuote.quotes.combo} selected={selectedOption === "combo"} onSelect={() => setSelectedOption("combo")} lang={lang} />
             <QuoteCard option={scoutQuote.quotes.single} selected={selectedOption === "single"} onSelect={() => setSelectedOption("single")} lang={lang} />
           </div>
-          <button className="primary" style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 8 }} onClick={() => setSendOpen(true)}>
-            <Send size={15} /> {isEn ? "Send Quote to Customer" : "Enviar cotización al cliente"}
-          </button>
+          <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+            <button className="primary" style={{ display: "flex", alignItems: "center", gap: 8 }} onClick={() => setSendOpen(true)}>
+              <Send size={15} /> {isEn ? "Send Quote to Customer" : "Enviar cotización al cliente"}
+            </button>
+            <button
+              className="primary"
+              disabled={verifyLoading}
+              onClick={async () => {
+                setVerifyLoading(true);
+                try {
+                  const demoP = isEn ? partsResultsEn : partsResults;
+                  const quoteParts = scoutQuote?.quotes?.combo?.parts || [];
+                  const partName = quoteParts[0]?.name || result?.estimate?.repairLabel || (isEn ? "Auto part" : "Pieza automotriz");
+                  const vehicleStr = scoutQuote?.vehicle ? `${scoutQuote.vehicle.year || ""} ${scoutQuote.vehicle.make || ""} ${scoutQuote.vehicle.model || ""}`.trim() : "";
+                  const stores = demoP.filter((p) => p.phone).map((p) => ({ name: p.seller, phone: p.phone }));
+                  if (!stores.length) { setVerifyLoading(false); return; }
+                  const { batchId } = await startPartsVerification({ parts: [{ partName, vehicle: vehicleStr || undefined, stores }] });
+                  setVerifyBatchId(batchId);
+                } catch (e) { console.error(e); }
+                finally { setVerifyLoading(false); }
+              }}
+              style={{ display: "flex", alignItems: "center", gap: 8, background: "#1d4ed8" }}
+            >
+              <Phone size={15} />
+              {verifyLoading ? (isEn ? "Starting calls…" : "Iniciando…") : (isEn ? "Verify via AI calls" : "Verificar con IA")}
+            </button>
+          </div>
           {sendOpen && (
             <SendQuoteModal
               quoteData={scoutQuote}
@@ -737,6 +913,13 @@ function DiagnosisResultCards({ result, lang, onAskFollowUp }) {
               lang={lang}
               onClose={() => setSendOpen(false)}
               onSent={() => {}}
+            />
+          )}
+          {verifyBatchId && (
+            <PartsVerificationModal
+              isEn={isEn}
+              batchId={verifyBatchId}
+              onClose={() => setVerifyBatchId(null)}
             />
           )}
         </>

@@ -759,7 +759,7 @@ async function callAI(systemPrompt, userPrompt) {
 }
 
 app.post("/api/parts/search", rateLimit({ key: "parts-search", windowMs: 60 * 1000, max: 20 }), async (request, response) => {
-  const { query, lang, zip, state } = request.body || {};
+  const { query, lang, zip, state, gasPrice, mpg } = request.body || {};
   if (!query || typeof query !== "string" || query.trim().length < 2) {
     return response.status(400).json({ error: "Query required." });
   }
@@ -767,6 +767,8 @@ app.post("/api/parts/search", rateLimit({ key: "parts-search", windowMs: 60 * 10
   const isEs = lang === "es";
   const q = query.trim();
   const location = [zip, state].filter(Boolean).join(", ") || "the local area";
+  const gasPriceNum = parseFloat(gasPrice) || 4.00;
+  const mpgNum = parseFloat(mpg) || 25;
 
   const systemPrompt = isEs
     ? `Eres un experto en autopartes. Devuelve SOLO JSON válido con resultados realistas para tiendas locales y en línea.`
@@ -775,48 +777,54 @@ app.post("/api/parts/search", rateLimit({ key: "parts-search", windowMs: 60 * 10
   const userPrompt = isEs
     ? `Búsqueda: "${q}"
 Ubicación: ${location}
+Precio de gasolina: $${gasPriceNum.toFixed(2)}/galón · Rendimiento del vehículo: ${mpgNum} mpg
 
-Devuelve un objeto JSON con DOS arrays:
+Devuelve un objeto JSON con TRES elementos:
 
-"local": resultados para AutoZone, O'Reilly Auto Parts, NAPA Auto Parts, Advance Auto Parts, AutoQuest cerca de ${location}. Cada entrada:
-- part: nombre exacto de la pieza
-- seller: nombre de la tienda
-- price: precio como "$XX.XX"
-- stock: unidades en inventario (0 si no tienen)
-- phone: teléfono realista de la tienda con código de área de ${location}
-- warranty: garantía típica como "Lifetime", "1 Year", "90 Days"
-- partNumber: número de parte del fabricante (ej. "Walker 52454" o "AC Delco 18A81")
+"local": array de resultados para AutoZone, O'Reilly Auto Parts, NAPA Auto Parts, Advance Auto Parts, AutoQuest cerca de ${location}. Cada entrada:
+- part, seller, price ("$XX.XX"), stock (número), phone, warranty, partNumber
+- distanceMiles: millas estimadas desde ${location} hasta esta tienda (número realista, 1-15)
+- driveMinutes: tiempo de manejo estimado en minutos de ida (número realista, 5-30)
 
-"online": resultados para eBay Motors, Amazon, RockAuto, CarParts.com, PartsGeek. Cada entrada:
-- part: nombre exacto con número de parte si es posible
-- seller: nombre de la tienda
-- price: precio como "$XX.XX"
-- partNumber: número de parte del fabricante
-- warranty: garantía típica
-- shipping: tiempo de envío como "2-3 días", "Envío gratis 5-7 días"
-- inStock: true o false`
+"online": array para eBay Motors, Amazon, RockAuto, CarParts.com, PartsGeek. Cada entrada:
+- part, seller, price ("$XX.XX"), partNumber, warranty
+- shipping: tiempo de envío
+- inStock: true o false
+
+"selfSource": objeto con análisis de conveniencia de compra propia:
+- cheapestStore: nombre de la tienda más barata con existencias
+- cheapestPrice: precio más bajo disponible localmente como número (sin $)
+- cheapestPartNumber: número de parte de la opción más barata
+- roundTripMiles: millas de ida y vuelta a la tienda más barata
+- roundTripMinutes: minutos de ida y vuelta
+- gasCost: costo de gasolina del viaje (roundTripMiles / ${mpgNum} * ${gasPriceNum.toFixed(2)}) como número con 2 decimales
+- worthIt: true si el cliente ahorraría dinero comprando las piezas él mismo (considerando gasolina y tiempo)
+- verdict: oración corta explicando la recomendación en español`
     : `Search: "${q}"
 Location: ${location}
+Gas price: $${gasPriceNum.toFixed(2)}/gal · Vehicle MPG: ${mpgNum}
 
-Return a JSON object with TWO arrays:
+Return a JSON object with THREE elements:
 
-"local": results for AutoZone, O'Reilly Auto Parts, NAPA Auto Parts, Advance Auto Parts, AutoQuest near ${location}. Each entry:
-- part: exact part name
-- seller: store name
-- price: price as "$XX.XX"
-- stock: estimated units in stock (0 if unlikely to carry)
-- phone: realistic store phone number with area code for ${location}
-- warranty: typical warranty like "Lifetime", "1 Year", "90 Days"
-- partNumber: manufacturer part number (e.g. "Walker 52454" or "AC Delco 18A81")
+"local": array of results for AutoZone, O'Reilly Auto Parts, NAPA Auto Parts, Advance Auto Parts, AutoQuest near ${location}. Each entry:
+- part, seller, price ("$XX.XX"), stock (number), phone, warranty, partNumber
+- distanceMiles: estimated miles from ${location} to this store (realistic number, 1-15)
+- driveMinutes: estimated one-way drive time in minutes (realistic number, 5-30)
 
-"online": results for eBay Motors, Amazon, RockAuto, CarParts.com, PartsGeek. Each entry:
-- part: exact part name with part number if possible
-- seller: store name
-- price: price as "$XX.XX"
-- partNumber: manufacturer part number (e.g. "Walker 52454" or "AC Delco 18A81")
-- warranty: typical warranty
-- shipping: shipping time like "2-3 days", "Free shipping 5-7 days"
-- inStock: true or false`;
+"online": array for eBay Motors, Amazon, RockAuto, CarParts.com, PartsGeek. Each entry:
+- part, seller, price ("$XX.XX"), partNumber, warranty
+- shipping: shipping time
+- inStock: true or false
+
+"selfSource": object with buy-it-yourself analysis:
+- cheapestStore: name of cheapest in-stock local store
+- cheapestPrice: lowest available local price as a number (no $)
+- cheapestPartNumber: part number for cheapest option
+- roundTripMiles: round trip miles to cheapest store
+- roundTripMinutes: round trip drive time in minutes
+- gasCost: gas cost for the trip (roundTripMiles / ${mpgNum} * ${gasPriceNum.toFixed(2)}) as number rounded to 2 decimals
+- worthIt: true if customer would save money buying the part themselves (accounting for gas and time)
+- verdict: one short sentence explaining the recommendation`;
 
   try {
     const raw = await callAI(systemPrompt, userPrompt);
@@ -838,6 +846,8 @@ Return a JSON object with TWO arrays:
       phone: r.phone || null,
       warranty: r.warranty || "—",
       partNumber: r.partNumber || null,
+      distanceMiles: r.distanceMiles ?? null,
+      driveMinutes: r.driveMinutes ?? null,
       url: null,
     }));
 
@@ -852,7 +862,21 @@ Return a JSON object with TWO arrays:
       url: buildSearchUrl(r.seller, r.partNumber, q),
     }));
 
-    return response.json({ results, online });
+    const ss = parsed.selfSource || {};
+    const selfSource = ss.cheapestStore ? {
+      cheapestStore: ss.cheapestStore,
+      cheapestPrice: parseFloat(ss.cheapestPrice) || null,
+      cheapestPartNumber: ss.cheapestPartNumber || null,
+      roundTripMiles: ss.roundTripMiles ?? null,
+      roundTripMinutes: ss.roundTripMinutes ?? null,
+      gasCost: parseFloat(ss.gasCost) || null,
+      worthIt: Boolean(ss.worthIt),
+      verdict: ss.verdict || null,
+      gasPrice: gasPriceNum,
+      mpg: mpgNum,
+    } : null;
+
+    return response.json({ results, online, selfSource });
   } catch (err) {
     console.error("[parts-search]", err.message);
     return response.status(500).json({ error: "Search failed." });

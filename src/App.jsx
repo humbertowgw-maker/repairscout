@@ -428,8 +428,11 @@ function PartsSearchPanel() {
   const [query, setQuery] = useState("");
   const [zip, setZip] = useState("");
   const [state, setState] = useState("");
+  const [gasPrice, setGasPrice] = useState("4.00");
+  const [mpg, setMpg] = useState("25");
   const [results, setResults] = useState(allParts);
   const [onlineResults, setOnlineResults] = useState([]);
+  const [selfSource, setSelfSource] = useState(null);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState(null);
   const [hasSearched, setHasSearched] = useState(false);
@@ -440,13 +443,18 @@ function PartsSearchPanel() {
   useEffect(() => { setVerifyBatchId(null); setSearchError(null); }, [lang]);
 
   const search = async () => {
-    if (!query.trim()) { setResults(allParts); setOnlineResults([]); setHasSearched(false); return; }
+    if (!query.trim()) { setResults(allParts); setOnlineResults([]); setHasSearched(false); setSelfSource(null); return; }
     setSearching(true);
     setSearchError(null);
     try {
-      const { results: found, online } = await searchParts(query.trim(), lang, zip.trim() || undefined, state.trim() || undefined);
+      const { results: found, online, selfSource: ss } = await searchParts(
+        query.trim(), lang,
+        zip.trim() || undefined, state.trim() || undefined,
+        parseFloat(gasPrice) || 4.00, parseFloat(mpg) || 25
+      );
       setResults(found && found.length ? found : allParts);
       setOnlineResults(online || []);
+      setSelfSource(ss || null);
       setHasSearched(true);
     } catch (e) {
       setSearchError(isEn ? "Search failed. Check your connection." : "Error en la búsqueda. Verifica tu conexión.");
@@ -471,23 +479,18 @@ function PartsSearchPanel() {
           onKeyDown={(e) => e.key === "Enter" && search()}
           style={{ ...INPUT_STYLE, flex: 2, minWidth: 200 }}
         />
-        <input
-          placeholder={isEn ? "ZIP code" : "Código postal"}
-          value={zip}
-          onChange={(e) => setZip(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && search()}
-          style={{ ...INPUT_STYLE, width: 90 }}
-        />
-        <input
-          placeholder={isEn ? "State (e.g. CA)" : "Estado (ej. CA)"}
-          value={state}
-          onChange={(e) => setState(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && search()}
-          style={{ ...INPUT_STYLE, width: 100 }}
-        />
+        <input placeholder={isEn ? "ZIP" : "C.P."} value={zip} onChange={(e) => setZip(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} style={{ ...INPUT_STYLE, width: 80 }} />
+        <input placeholder={isEn ? "State" : "Estado"} value={state} onChange={(e) => setState(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} style={{ ...INPUT_STYLE, width: 80 }} />
         <button className="primary" onClick={search} disabled={searching} style={{ display: "flex", alignItems: "center", gap: 6 }}>
           {searching ? (isEn ? "Searching..." : "Buscando...") : <><Search size={15} />{isEn ? "Search" : "Buscar"}</>}
         </button>
+      </div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 14, alignItems: "center", flexWrap: "wrap" }}>
+        <span style={{ fontSize: 10, color: "#64748b" }}>⛽ {isEn ? "Gas price/gal:" : "Gasolina/gal:"}</span>
+        <input value={gasPrice} onChange={(e) => setGasPrice(e.target.value)} style={{ ...INPUT_STYLE, width: 70, padding: "6px 10px" }} />
+        <span style={{ fontSize: 10, color: "#64748b" }}>🚗 MPG:</span>
+        <input value={mpg} onChange={(e) => setMpg(e.target.value)} style={{ ...INPUT_STYLE, width: 60, padding: "6px 10px" }} />
+        <span style={{ fontSize: 10, color: "#475569" }}>{isEn ? "Used to calculate drive cost" : "Para calcular costo de viaje"}</span>
       </div>
       {searchError && <p style={{ color: "#f87171", fontSize: 12, marginBottom: 12 }}>{searchError}</p>}
 
@@ -570,6 +573,45 @@ function PartsSearchPanel() {
           <p style={{ fontSize: 10, color: "#94a3b8", marginTop: 6 }}>
             {isEn ? "Beto will call each store and confirm stock, price, and same-day pickup." : "Beto llamará a cada tienda y confirmará existencias, precio y recogida el mismo día."}
           </p>
+        </div>
+      )}
+
+      {/* ── Buy It Yourself Analysis ── */}
+      {hasSearched && selfSource && (
+        <div style={{ background: selfSource.worthIt ? "#052e16" : "#1c0a03", border: `1px solid ${selfSource.worthIt ? "#16a34a" : "#f97316"}`, borderRadius: 10, padding: "16px 18px", marginBottom: 16 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: selfSource.worthIt ? "#4ade80" : "#fb923c", marginBottom: 10 }}>
+            🚗 {isEn ? "Buy It Yourself Analysis" : "Análisis: ¿Vale la pena comprarlo?"}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10, marginBottom: 12 }}>
+            {[
+              [isEn ? "Cheapest Option" : "Opción más barata", selfSource.cheapestStore, "#e2e8f0"],
+              [isEn ? "Part Price" : "Precio de pieza", selfSource.cheapestPrice != null ? `$${selfSource.cheapestPrice.toFixed(2)}` : "—", "#f1f5f9"],
+              [isEn ? "Part #" : "Núm. pieza", selfSource.cheapestPartNumber || "—", "#93c5fd"],
+              [isEn ? "Round Trip" : "Viaje ida y vuelta", selfSource.roundTripMiles != null ? `${selfSource.roundTripMiles} mi · ${selfSource.roundTripMinutes} min` : "—", "#e2e8f0"],
+              [isEn ? "Gas Cost" : "Costo de gasolina", selfSource.gasCost != null ? `$${selfSource.gasCost.toFixed(2)}` : "—", "#fbbf24"],
+              [isEn ? "Total Cost to Self-Source" : "Costo total si lo compras tú", selfSource.cheapestPrice != null && selfSource.gasCost != null ? `$${(selfSource.cheapestPrice + selfSource.gasCost).toFixed(2)}` : "—", selfSource.worthIt ? "#4ade80" : "#f87171"],
+            ].map(([label, val, color]) => (
+              <div key={label} style={{ background: "#ffffff0a", borderRadius: 8, padding: "10px 12px" }}>
+                <div style={{ fontSize: 9, color: "#64748b", marginBottom: 4 }}>{label}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color }}>{val}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+            <span style={{ fontSize: 22 }}>{selfSource.worthIt ? "✅" : "❌"}</span>
+            <div>
+              <div style={{ fontWeight: 700, color: selfSource.worthIt ? "#4ade80" : "#f87171", fontSize: 13, marginBottom: 2 }}>
+                {selfSource.worthIt ? (isEn ? "Worth it — customer saves money buying the part" : "Vale la pena — el cliente ahorra comprando la pieza") : (isEn ? "Not worth it — shop sourcing is the better deal" : "No vale la pena — que el taller consiga la pieza")}
+              </div>
+              <div style={{ fontSize: 11, color: "#94a3b8" }}>{selfSource.verdict}</div>
+              <div style={{ fontSize: 10, color: "#64748b", marginTop: 6 }}>
+                ⛽ ${selfSource.gasPrice?.toFixed(2)}/gal · {selfSource.mpg} mpg
+                {selfSource.worthIt && <span style={{ marginLeft: 8, color: "#64748b" }}>
+                  {isEn ? "· Note: some shops charge more labor when customer supplies parts" : "· Nota: algunos talleres cobran más mano de obra si el cliente trae piezas"}
+                </span>}
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

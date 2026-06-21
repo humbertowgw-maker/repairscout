@@ -169,8 +169,8 @@ export function getAdminQuotes() {
   return request("/api/admin/quotes");
 }
 
-export function searchParts(query, lang, zip, state) {
-  return request("/api/parts/search", { method: "POST", body: JSON.stringify({ query, lang, zip, state }) });
+export function searchParts(query, lang, zip, state, gasPrice, mpg) {
+  return request("/api/parts/search", { method: "POST", body: JSON.stringify({ query, lang, zip, state, gasPrice, mpg }) });
 }
 
 export function startPartsVerification(payload) {

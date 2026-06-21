@@ -421,21 +421,25 @@ function PartsSearchPanel() {
 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState(allParts);
+  const [onlineResults, setOnlineResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState(null);
+  const [hasSearched, setHasSearched] = useState(false);
   const [callScript, setCallScript] = useState(null);
   const [verifyBatchId, setVerifyBatchId] = useState(null);
   const [verifyLoading, setVerifyLoading] = useState(false);
 
-  useEffect(() => { setResults(allParts); setQuery(""); setVerifyBatchId(null); setSearchError(null); }, [lang]);
+  useEffect(() => { setResults(allParts); setQuery(""); setVerifyBatchId(null); setSearchError(null); setOnlineResults([]); setHasSearched(false); }, [lang]);
 
   const search = async () => {
-    if (!query.trim()) { setResults(allParts); return; }
+    if (!query.trim()) { setResults(allParts); setOnlineResults([]); setHasSearched(false); return; }
     setSearching(true);
     setSearchError(null);
     try {
-      const { results: found } = await searchParts(query.trim(), lang);
+      const { results: found, online } = await searchParts(query.trim(), lang);
       setResults(found && found.length ? found : allParts);
+      setOnlineResults(online || []);
+      setHasSearched(true);
     } catch (e) {
       setSearchError(isEn ? "Search failed. Check your connection." : "Error en la búsqueda. Verifica tu conexión.");
     } finally {
@@ -448,12 +452,12 @@ function PartsSearchPanel() {
       <div className="panel-title">
         <div>
           <h2>{isEn ? "Parts Search" : "Búsqueda de piezas"}</h2>
-          <p>{isEn ? "Local and online inventory" : "Inventario local y en línea"}</p>
+          <p>{isEn ? "Local stores + online retailers" : "Tiendas locales + tiendas en línea"}</p>
         </div>
       </div>
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
         <input
-          placeholder={isEn ? "e.g. brake pads Honda Accord 2019..." : "Ej: pastillas de freno Honda Accord 2019..."}
+          placeholder={isEn ? "e.g. exhaust pipe 1991 GMC Sonoma..." : "Ej: tubo de escape 1991 GMC Sonoma..."}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && search()}
@@ -467,6 +471,12 @@ function PartsSearchPanel() {
         </button>
       </div>
       {searchError && <p style={{ color: "#f87171", fontSize: 12, marginBottom: 12 }}>{searchError}</p>}
+
+      {/* ── Local Stores ── */}
+      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#64748b", marginBottom: 8 }}>
+        <Store size={11} style={{ verticalAlign: "middle", marginRight: 4 }} />
+        {isEn ? "Local Stores" : "Tiendas locales"}
+      </div>
       <div className="parts-table">
         <div className="table-head">
           <span>{isEn ? "Seller & Part" : "Vendedor y pieza"}</span>
@@ -481,22 +491,21 @@ function PartsSearchPanel() {
               <span className="seller-icon"><Store size={20} /></span>
               <span><strong>{p.seller}</strong><small>{p.part}</small><i>{p.badge}</i></span>
             </div>
-            <div><strong>{p.availability}</strong><small>{p.distance}</small></div>
-            <div><strong>{p.warranty}</strong><small>{isEn ? "See terms" : "Ver términos"}</small></div>
+            <div><strong>{p.availability || (isEn ? "Same day" : "Mismo día")}</strong><small>{p.distance}</small></div>
+            <div><strong>{p.warranty || "—"}</strong><small>{isEn ? "See terms" : "Ver términos"}</small></div>
             <div>
               {p.stock === null
-                ? <strong style={{ color: "#64748b" }}>{isEn ? "Online" : "En línea"}</strong>
-                : p.stock <= 2
-                  ? <strong style={{ color: "#f97316" }}>{p.stock} {isEn ? "left" : "disponible(s)"}</strong>
-                  : <strong style={{ color: "#22c55e" }}>{p.stock} {isEn ? "in stock" : "en stock"}</strong>}
-              {p.stock !== null && <small style={{ fontSize: 9, color: "#94a3b8" }}>{isEn ? "est. qty" : "cant. est."}</small>}
+                ? <strong style={{ color: "#64748b" }}>{isEn ? "Call to check" : "Llama para verificar"}</strong>
+                : p.stock === 0
+                  ? <strong style={{ color: "#ef4444" }}>{isEn ? "Out of stock" : "Sin existencias"}</strong>
+                  : p.stock <= 2
+                    ? <strong style={{ color: "#f97316" }}>{p.stock} {isEn ? "left" : "disponible(s)"}</strong>
+                    : <strong style={{ color: "#22c55e" }}>{p.stock} {isEn ? "in stock" : "en stock"}</strong>}
+              {p.stock > 0 && <small style={{ fontSize: 9, color: "#94a3b8" }}>{isEn ? "est. qty" : "cant. est."}</small>}
             </div>
             <div className="part-price">
-              ${p.price.toFixed(2)}
+              {p.price}
               <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
-                <button onClick={() => window.open(`https://www.google.com/search?q=${encodeURIComponent(p.part + " " + p.seller)}`, "_blank")}>
-                  {isEn ? "View" : "Ver"}
-                </button>
                 {p.phone && (
                   <button
                     style={{ color: "#3b82f6", fontWeight: 700 }}
@@ -510,9 +519,10 @@ function PartsSearchPanel() {
           </div>
         ))}
       </div>
-      {/* Bland.ai verify button — only show for results that have phone numbers */}
+
+      {/* ── Verify via AI calls ── */}
       {results.some((p) => p.phone) && (
-        <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid #e7ebe8" }}>
+        <div style={{ marginTop: 12, marginBottom: 24 }}>
           <button
             className="primary"
             disabled={verifyLoading}
@@ -531,14 +541,64 @@ function PartsSearchPanel() {
             <Phone size={15} />
             {verifyLoading
               ? (isEn ? "Starting calls…" : "Iniciando llamadas…")
-              : (isEn ? "Verify availability via AI calls" : "Verificar disponibilidad con llamadas IA")}
+              : (isEn ? "Verify availability via AI calls" : "Verificar con llamadas IA")}
           </button>
           <p style={{ fontSize: 10, color: "#94a3b8", marginTop: 6 }}>
-            {isEn
-              ? "Bland.ai will call each local store and report back on stock, price, and pickup availability."
-              : "Bland.ai llamará a cada tienda local y reportará existencias, precio y disponibilidad de recogida."}
+            {isEn ? "Beto will call each store and confirm stock, price, and same-day pickup." : "Beto llamará a cada tienda y confirmará existencias, precio y recogida el mismo día."}
           </p>
         </div>
+      )}
+
+      {/* ── Online Retailers ── */}
+      {hasSearched && (
+        <>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#64748b", marginBottom: 8, marginTop: 8, borderTop: "1px solid #1e2d47", paddingTop: 16 }}>
+            🌐 {isEn ? "Online Retailers" : "Tiendas en línea"}
+            <span style={{ fontWeight: 400, marginLeft: 8, textTransform: "none", fontSize: 10, color: "#475569" }}>
+              {isEn ? "Top 5 results — click to order" : "Top 5 resultados — clic para ordenar"}
+            </span>
+          </div>
+          {onlineResults.length === 0
+            ? <p style={{ fontSize: 12, color: "#64748b" }}>{isEn ? "No online results found." : "Sin resultados en línea."}</p>
+            : onlineResults.map((p, i) => (
+              <div key={i} style={{ background: "#0a1020", border: "1px solid #1e2d47", borderRadius: 8, padding: "12px 14px", marginBottom: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 700, color: "#e2e8f0", fontSize: 13 }}>{p.seller}</div>
+                    <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 2 }}>{p.part}</div>
+                    {p.partNumber && (
+                      <div style={{ fontSize: 10, color: "#64748b", marginTop: 2 }}>
+                        {isEn ? "Part #" : "Núm. pieza"}: <span style={{ color: "#93c5fd" }}>{p.partNumber}</span>
+                      </div>
+                    )}
+                    <div style={{ display: "flex", gap: 12, marginTop: 6, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 10, color: p.inStock ? "#22c55e" : "#ef4444", fontWeight: 700 }}>
+                        {p.inStock ? (isEn ? "✓ In Stock" : "✓ En stock") : (isEn ? "✗ Out of Stock" : "✗ Sin existencias")}
+                      </span>
+                      <span style={{ fontSize: 10, color: "#94a3b8" }}>🛡 {p.warranty}</span>
+                      <span style={{ fontSize: 10, color: "#94a3b8" }}>🚚 {p.shipping}</span>
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "right", flexShrink: 0 }}>
+                    <div style={{ fontSize: 18, fontWeight: 800, color: "#f1f5f9" }}>{p.price}</div>
+                    <a
+                      href={p.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        display: "inline-block", marginTop: 6, padding: "5px 12px",
+                        background: "#1d4ed8", color: "#fff", borderRadius: 5,
+                        fontSize: 11, fontWeight: 700, textDecoration: "none",
+                      }}
+                    >
+                      {isEn ? "Order Now →" : "Ordenar →"}
+                    </a>
+                  </div>
+                </div>
+              </div>
+            ))
+          }
+        </>
       )}
 
       {callScript && (

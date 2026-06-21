@@ -689,7 +689,70 @@ app.get("/api/diagnose/result/:id", async (request, response) => {
   return response.json({ ready: true, paid: true, result: pending.result, vehicle: pending.vehicle });
 });
 
-// ── Parts search (AI-generated store results) ─────────────────────────────────
+// ── Parts search (AI-generated local + online results) ────────────────────────
+
+function buildSearchUrl(store, partNumber, query) {
+  const q = encodeURIComponent(query);
+  const pn = encodeURIComponent(partNumber || query);
+  switch (store) {
+    case "eBay Motors":      return `https://www.ebay.com/sch/i.html?_nkw=${q}&_sacat=6030`;
+    case "Amazon":           return `https://www.amazon.com/s?k=${q}&i=automotive`;
+    case "RockAuto":         return `https://www.rockauto.com/en/partsearch/?query=${q}`;
+    case "CarParts.com":     return `https://www.carparts.com/search?q=${q}`;
+    case "PartsGeek":        return `https://www.partsgeek.com/search?q=${q}`;
+    default:                 return `https://www.google.com/search?q=${q}+auto+parts`;
+  }
+}
+
+async function callAI(systemPrompt, userPrompt) {
+  const providerOrder = (process.env.AI_PROVIDER_ORDER || "groq,gemini,openrouter").split(",").map(s => s.trim());
+  for (const provider of providerOrder) {
+    try {
+      if (provider === "groq" && process.env.GROQ_API_KEY) {
+        const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
+            messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }],
+            temperature: 0.3, max_tokens: 1200, response_format: { type: "json_object" },
+          }),
+        });
+        const data = await res.json();
+        const raw = data?.choices?.[0]?.message?.content;
+        if (raw) return raw;
+      } else if (provider === "gemini" && (process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY)) {
+        const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+        const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }],
+            generationConfig: { temperature: 0.3, maxOutputTokens: 1200, responseMimeType: "application/json" },
+          }),
+        });
+        const data = await res.json();
+        const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (raw) return raw;
+      } else if (provider === "openrouter" && process.env.OPENROUTER_API_KEY) {
+        const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: process.env.OPENROUTER_MODEL || "openrouter/free",
+            messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }],
+            temperature: 0.3, max_tokens: 1200,
+          }),
+        });
+        const data = await res.json();
+        const raw = data?.choices?.[0]?.message?.content;
+        if (raw) return raw;
+      }
+    } catch { continue; }
+  }
+  return null;
+}
 
 app.post("/api/parts/search", rateLimit({ key: "parts-search", windowMs: 60 * 1000, max: 20 }), async (request, response) => {
   const { query, lang } = request.body || {};
@@ -698,75 +761,56 @@ app.post("/api/parts/search", rateLimit({ key: "parts-search", windowMs: 60 * 10
   }
 
   const isEs = lang === "es";
-  const stores = [
-    { name: "AutoZone", phone: "(916) 555-0121" },
-    { name: "O'Reilly Auto Parts", phone: "(916) 555-0188" },
-    { name: "NAPA Auto Parts", phone: "(916) 555-0244" },
-    { name: "Advance Auto Parts", phone: "(916) 555-0312" },
-    { name: "RockAuto", phone: null },
-  ];
+  const q = query.trim();
 
   const systemPrompt = isEs
-    ? `Eres un experto en autopartes. Para la búsqueda dada, devuelve resultados realistas de disponibilidad en tiendas locales. Responde SOLO con JSON válido.`
-    : `You are an auto parts expert. For the given search query, return realistic availability results across local auto parts stores. Respond ONLY with valid JSON.`;
+    ? `Eres un experto en autopartes. Devuelve SOLO JSON válido con resultados realistas para tiendas locales y en línea.`
+    : `You are an auto parts expert. Return ONLY valid JSON with realistic results for both local stores and online retailers.`;
 
   const userPrompt = isEs
-    ? `Búsqueda: "${query.trim()}"\n\nDevuelve un array JSON "results" con entradas para estas tiendas: AutoZone, O'Reilly Auto Parts, NAPA Auto Parts, Advance Auto Parts, RockAuto.\n\nCada entrada debe tener:\n- part: nombre exacto de la pieza (string)\n- seller: nombre de la tienda (string)\n- price: precio realista en dólares como "$XX.XX" (string)\n- stock: unidades estimadas en inventario (número, null para RockAuto)\n- phone: número de teléfono de la tienda (string, null para RockAuto)\n- url: null\n\nSi la pieza normalmente no estaría en una tienda específica, pon stock: 0. RockAuto siempre tiene stock abundante pero sin teléfono. Sé realista con los precios según el tipo de pieza y el vehículo.`
-    : `Search: "${query.trim()}"\n\nReturn a JSON array "results" with entries for these stores: AutoZone, O'Reilly Auto Parts, NAPA Auto Parts, Advance Auto Parts, RockAuto.\n\nEach entry must have:\n- part: exact part name matching the search (string)\n- seller: store name (string)\n- price: realistic price as "$XX.XX" (string)\n- stock: estimated units in stock (number, null for RockAuto)\n- phone: store phone number (string, null for RockAuto)\n- url: null\n\nIf the part would not normally be stocked at a specific store, set stock: 0. RockAuto always has stock but no phone. Be realistic with pricing based on part type and vehicle year/make/model.`;
+    ? `Búsqueda: "${q}"
+
+Devuelve un objeto JSON con DOS arrays:
+
+"local": resultados para AutoZone, O'Reilly Auto Parts, NAPA Auto Parts, Advance Auto Parts. Cada entrada:
+- part: nombre exacto de la pieza
+- seller: nombre de la tienda
+- price: precio como "$XX.XX"
+- stock: unidades en inventario (0 si no tienen)
+- phone: teléfono de la tienda (usa números ficticios realistas)
+- warranty: garantía típica como "Lifetime", "1 Year", "90 Days"
+
+"online": resultados para eBay Motors, Amazon, RockAuto, CarParts.com, PartsGeek. Cada entrada:
+- part: nombre exacto con número de parte si es posible
+- seller: nombre de la tienda
+- price: precio como "$XX.XX"
+- partNumber: número de parte del fabricante (ej. "AC Delco 18A81")
+- warranty: garantía típica
+- shipping: tiempo de envío como "2-3 días", "Envío gratis 5-7 días"
+- inStock: true o false`
+    : `Search: "${q}"
+
+Return a JSON object with TWO arrays:
+
+"local": results for AutoZone, O'Reilly Auto Parts, NAPA Auto Parts, Advance Auto Parts. Each entry:
+- part: exact part name
+- seller: store name
+- price: price as "$XX.XX"
+- stock: estimated units in stock (0 if unlikely to carry)
+- phone: store phone (use realistic fake numbers)
+- warranty: typical warranty like "Lifetime", "1 Year", "90 Days"
+
+"online": results for eBay Motors, Amazon, RockAuto, CarParts.com, PartsGeek. Each entry:
+- part: exact part name with part number if possible
+- seller: store name
+- price: price as "$XX.XX"
+- partNumber: manufacturer part number (e.g. "Walker 52454" or "AC Delco 18A81")
+- warranty: typical warranty
+- shipping: shipping time like "2-3 days", "Free shipping 5-7 days"
+- inStock: true or false`;
 
   try {
-    const { diagnoseWithGroqRaw, callAIRaw } = await import("./diagnosis.js").catch(() => null) || {};
-
-    // Use whichever AI provider is configured
-    const providerOrder = (process.env.AI_PROVIDER_ORDER || "groq,gemini,openrouter").split(",").map(s => s.trim());
-    let raw = null;
-
-    for (const provider of providerOrder) {
-      try {
-        if (provider === "groq" && process.env.GROQ_API_KEY) {
-          const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-            method: "POST",
-            headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}`, "Content-Type": "application/json" },
-            body: JSON.stringify({
-              model: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
-              messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }],
-              temperature: 0.3, max_tokens: 800, response_format: { type: "json_object" },
-            }),
-          });
-          const data = await res.json();
-          raw = data?.choices?.[0]?.message?.content;
-          if (raw) break;
-        } else if (provider === "gemini" && (process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY)) {
-          const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
-          const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
-          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }],
-              generationConfig: { temperature: 0.3, maxOutputTokens: 800, responseMimeType: "application/json" },
-            }),
-          });
-          const data = await res.json();
-          raw = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (raw) break;
-        } else if (provider === "openrouter" && process.env.OPENROUTER_API_KEY) {
-          const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-            method: "POST",
-            headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, "Content-Type": "application/json" },
-            body: JSON.stringify({
-              model: process.env.OPENROUTER_MODEL || "openrouter/free",
-              messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }],
-              temperature: 0.3, max_tokens: 800,
-            }),
-          });
-          const data = await res.json();
-          raw = data?.choices?.[0]?.message?.content;
-          if (raw) break;
-        }
-      } catch { continue; }
-    }
-
+    const raw = await callAI(systemPrompt, userPrompt);
     if (!raw) return response.status(503).json({ error: "AI provider unavailable." });
 
     let parsed;
@@ -777,16 +821,28 @@ app.post("/api/parts/search", rateLimit({ key: "parts-search", windowMs: 60 * 10
       return response.status(500).json({ error: "Failed to parse AI response." });
     }
 
-    const results = (parsed.results || []).map((r) => ({
-      part: r.part || query.trim(),
+    const results = (parsed.local || []).map((r) => ({
+      part: r.part || q,
       seller: r.seller || "Unknown",
       price: r.price || "—",
       stock: r.stock ?? null,
       phone: r.phone || null,
+      warranty: r.warranty || "—",
       url: null,
     }));
 
-    return response.json({ results });
+    const online = (parsed.online || []).slice(0, 5).map((r) => ({
+      part: r.part || q,
+      seller: r.seller || "Unknown",
+      price: r.price || "—",
+      partNumber: r.partNumber || null,
+      warranty: r.warranty || "—",
+      shipping: r.shipping || "Varies",
+      inStock: r.inStock !== false,
+      url: buildSearchUrl(r.seller, r.partNumber, q),
+    }));
+
+    return response.json({ results, online });
   } catch (err) {
     console.error("[parts-search]", err.message);
     return response.status(500).json({ error: "Search failed." });

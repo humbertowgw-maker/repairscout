@@ -692,6 +692,7 @@ app.get("/api/diagnose/result/:id", async (request, response) => {
 // ── Bland.ai parts verification ───────────────────────────────────────────────
 
 const verifySchema = z.object({
+  lang: z.enum(["en", "es"]).optional().default("en"),
   parts: z.array(z.object({
     partName: z.string().min(1),
     vehicle: z.string().optional(),
@@ -738,6 +739,7 @@ app.post("/api/parts/verify", rateLimit({ key: "bland", windowMs: 60 * 1000, max
             storeName: rec.storeName,
             storePhone: rec.storePhone,
             webhookUrl,
+            lang: parsed.data.lang || "en",
           });
           await updateBlandCallId(rec.id, call.call_id);
         } else {

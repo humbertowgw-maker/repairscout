@@ -515,7 +515,7 @@ function PartsSearchPanel() {
               try {
                 const stores = results.filter((p) => p.phone).map((p) => ({ name: p.seller, phone: p.phone }));
                 const partName = results[0]?.part || (isEn ? "Auto part" : "Pieza automotriz");
-                const { batchId } = await startPartsVerification({ parts: [{ partName, vehicle: query || undefined, stores }] });
+                const { batchId } = await startPartsVerification({ lang, parts: [{ partName, vehicle: query || undefined, stores }] });
                 setVerifyBatchId(batchId);
               } catch (e) { console.error(e); }
               finally { setVerifyLoading(false); }
@@ -772,7 +772,7 @@ function DiagnosisResultCards({ result, lang, onAskFollowUp }) {
 
       {/* Estimate */}
       {result.estimate && (
-        <div style={{ ...CARD_DARK, background: "rgba(249,115,22,.06)", border: "1px solid rgba(249,115,22,.18)", marginTop: 4 }}>
+        <div style={{ ...CARD_DARK, background: "#1a0d03", border: "1px solid rgba(249,115,22,.45)", marginTop: 4 }}>
           <div style={{ fontSize: 9, color: "#f97316", marginBottom: 6, letterSpacing: ".12em", fontWeight: 700, textTransform: "uppercase" }}>{t("scoutEstimate")}</div>
           <div style={{ fontSize: 28, fontWeight: 800, color: "#fff", letterSpacing: "-1px" }}>
             ${result.estimate.low ?? "—"} – ${result.estimate.high ?? "—"}
@@ -894,7 +894,7 @@ function DiagnosisResultCards({ result, lang, onAskFollowUp }) {
                   const vehicleStr = scoutQuote?.vehicle ? `${scoutQuote.vehicle.year || ""} ${scoutQuote.vehicle.make || ""} ${scoutQuote.vehicle.model || ""}`.trim() : "";
                   const stores = demoP.filter((p) => p.phone).map((p) => ({ name: p.seller, phone: p.phone }));
                   if (!stores.length) { setVerifyLoading(false); return; }
-                  const { batchId } = await startPartsVerification({ parts: [{ partName, vehicle: vehicleStr || undefined, stores }] });
+                  const { batchId } = await startPartsVerification({ lang, parts: [{ partName, vehicle: vehicleStr || undefined, stores }] });
                   setVerifyBatchId(batchId);
                 } catch (e) { console.error(e); }
                 finally { setVerifyLoading(false); }

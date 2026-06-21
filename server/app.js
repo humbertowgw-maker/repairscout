@@ -772,7 +772,7 @@ app.post("/api/parts/search", rateLimit({ key: "parts-search", windowMs: 60 * 10
 
 Devuelve un objeto JSON con DOS arrays:
 
-"local": resultados para AutoZone, O'Reilly Auto Parts, NAPA Auto Parts, Advance Auto Parts. Cada entrada:
+"local": resultados para AutoZone, O'Reilly Auto Parts, NAPA Auto Parts, Advance Auto Parts, AutoQuest. Cada entrada:
 - part: nombre exacto de la pieza
 - seller: nombre de la tienda
 - price: precio como "$XX.XX"
@@ -792,7 +792,7 @@ Devuelve un objeto JSON con DOS arrays:
 
 Return a JSON object with TWO arrays:
 
-"local": results for AutoZone, O'Reilly Auto Parts, NAPA Auto Parts, Advance Auto Parts. Each entry:
+"local": results for AutoZone, O'Reilly Auto Parts, NAPA Auto Parts, Advance Auto Parts, AutoQuest. Each entry:
 - part: exact part name
 - seller: store name
 - price: price as "$XX.XX"

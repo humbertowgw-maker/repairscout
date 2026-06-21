@@ -384,17 +384,23 @@ function CustomersPanel({ requests }) {
 }
 
 function PartsSearchPanel() {
+  const { lang } = useLang();
+  const isEn = lang === "en";
+  const allParts = isEn ? partsResultsEn : partsResults;
+
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState(partsResults);
+  const [results, setResults] = useState(allParts);
   const [searching, setSearching] = useState(false);
 
+  useEffect(() => { setResults(allParts); setQuery(""); }, [lang]);
+
   const search = () => {
-    if (!query.trim()) { setResults(partsResults); return; }
+    if (!query.trim()) { setResults(allParts); return; }
     setSearching(true);
     setTimeout(() => {
       const q = query.toLowerCase();
-      const found = partsResults.filter((p) => p.part.toLowerCase().includes(q) || p.seller.toLowerCase().includes(q));
-      setResults(found.length ? found : partsResults);
+      const found = allParts.filter((p) => p.part.toLowerCase().includes(q) || p.seller.toLowerCase().includes(q));
+      setResults(found.length ? found : allParts);
       setSearching(false);
     }, 400);
   };
@@ -402,11 +408,14 @@ function PartsSearchPanel() {
   return (
     <section className="panel">
       <div className="panel-title">
-        <div><h2>Búsqueda de piezas</h2><p>Inventario local y en línea en tiempo real</p></div>
+        <div>
+          <h2>{isEn ? "Parts Search" : "Búsqueda de piezas"}</h2>
+          <p>{isEn ? "Local and online inventory" : "Inventario local y en línea"}</p>
+        </div>
       </div>
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
         <input
-          placeholder="Ej: pastillas de freno Honda Accord 2019..."
+          placeholder={isEn ? "e.g. brake pads Honda Accord 2019..." : "Ej: pastillas de freno Honda Accord 2019..."}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && search()}
@@ -416,22 +425,29 @@ function PartsSearchPanel() {
           }}
         />
         <button className="primary" onClick={search} disabled={searching} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {searching ? "Buscando..." : <><Search size={15} /> Buscar</>}
+          {searching ? (isEn ? "Searching..." : "Buscando...") : <><Search size={15} />{isEn ? "Search" : "Buscar"}</>}
         </button>
       </div>
       <div className="parts-table">
-        <div className="table-head"><span>Vendedor y pieza</span><span>Disponibilidad</span><span>Garantía</span><span>Precio</span></div>
-        {results.map((p) => (
-          <div className="part-row" key={p.seller}>
+        <div className="table-head">
+          <span>{isEn ? "Seller & Part" : "Vendedor y pieza"}</span>
+          <span>{isEn ? "Availability" : "Disponibilidad"}</span>
+          <span>{isEn ? "Warranty" : "Garantía"}</span>
+          <span>{isEn ? "Price" : "Precio"}</span>
+        </div>
+        {results.map((p, i) => (
+          <div className="part-row" key={`${p.seller}-${i}`}>
             <div className="seller-cell">
               <span className="seller-icon"><Store size={20} /></span>
               <span><strong>{p.seller}</strong><small>{p.part}</small><i>{p.badge}</i></span>
             </div>
             <div><strong>{p.availability}</strong><small>{p.distance}</small></div>
-            <div><strong>{p.warranty}</strong><small>Consulta los términos</small></div>
+            <div><strong>{p.warranty}</strong><small>{isEn ? "See terms" : "Consulta los términos"}</small></div>
             <div className="part-price">
               ${p.price.toFixed(2)}
-              <button onClick={() => window.open(`https://www.google.com/search?q=${encodeURIComponent(p.part + " " + p.seller)}`, "_blank")}>Ver</button>
+              <button onClick={() => window.open(`https://www.google.com/search?q=${encodeURIComponent(p.part + " " + p.seller)}`, "_blank")}>
+                {isEn ? "View" : "Ver"}
+              </button>
             </div>
           </div>
         ))}

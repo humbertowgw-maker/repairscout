@@ -1,4 +1,24 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, Component } from "react";
+
+class ErrorBoundary extends Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { console.error("[RepairScout] Render error:", error, info); }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ padding: 32, fontFamily: "system-ui", background: "#0d1829", minHeight: "100vh", color: "#f1f5f9" }}>
+          <h2 style={{ color: "#f87171" }}>Something went wrong</h2>
+          <p style={{ color: "#94a3b8", fontSize: 13 }}>{this.state.error?.message}</p>
+          <button onClick={() => this.setState({ error: null })} style={{ marginTop: 16, background: "#1e3a5f", color: "#f1f5f9", border: "none", padding: "10px 20px", borderRadius: 8, cursor: "pointer" }}>
+            Try again
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 import {
   ArrowRight,
   BadgeCheck,
@@ -315,7 +335,8 @@ function AppointmentsPanel({ onBook }) {
 
 function InvoiceModal({ order, lang, onClose, onSent }) {
   const isEn = lang === "en";
-  const displayQ = order?.quoteSingle || order?.quoteCombo;
+  const _hasData = (q) => q && Object.keys(q).length > 0;
+  const displayQ = _hasData(order?.quoteSingle) ? order.quoteSingle : _hasData(order?.quoteCombo) ? order.quoteCombo : null;
   const veh = order?.vehicle || {};
   const vehicleStr = [veh.year, veh.make, veh.model].filter(Boolean).join(" ") || "—";
 
@@ -579,7 +600,8 @@ function WorkOrdersPanel({ user }) {
         const isOpen = expanded?.id === o.id;
         const veh = o.vehicle || {};
         const vehicleStr = [veh.year, veh.make, veh.model].filter(Boolean).join(" ") || "—";
-        const displayQ = o.quoteSingle || o.quoteCombo;
+        const hasData = (q) => q && Object.keys(q).length > 0;
+        const displayQ = hasData(o.quoteSingle) ? o.quoteSingle : hasData(o.quoteCombo) ? o.quoteCombo : null;
         const stageIdx = REPAIR_STAGES.indexOf(o.repairStage);
         const nextStage = stageIdx >= 0 && stageIdx < REPAIR_STAGES.length - 1 ? REPAIR_STAGES[stageIdx + 1] : null;
         const color = stageColor(o.repairStage);
@@ -4084,7 +4106,7 @@ function Footer({ setPage }) {
   );
 }
 
-export default function App() {
+function App() {
   const [portal, setPortal] = useState("landing");
   const [page, setPage] = useState("home");
   const [user, setUser] = useState(null);
@@ -4156,4 +4178,8 @@ export default function App() {
       )}
     </LangCtx.Provider>
   );
+}
+
+export default function AppWithBoundary() {
+  return <ErrorBoundary><App /></ErrorBoundary>;
 }

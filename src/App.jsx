@@ -437,7 +437,7 @@ function PartsSearchPanel() {
   const [verifyBatchId, setVerifyBatchId] = useState(null);
   const [verifyLoading, setVerifyLoading] = useState(false);
 
-  useEffect(() => { setResults(allParts); setQuery(""); setVerifyBatchId(null); setSearchError(null); setOnlineResults([]); setHasSearched(false); }, [lang]);
+  useEffect(() => { setVerifyBatchId(null); setSearchError(null); }, [lang]);
 
   const search = async () => {
     if (!query.trim()) { setResults(allParts); setOnlineResults([]); setHasSearched(false); return; }
@@ -2904,15 +2904,28 @@ function AdminPanel() {
   );
 }
 
+// Stable tab keys that survive language switches
+const TAB_KEYS = ["tabResumen","tabSolicitudes","sentQuotes","tabCitas","tabOrdenes","tabClientes","tabPiezas","tabScout","tabPerfil","admin"];
+
+function tabLabel(key, lang) {
+  if (key === "sentQuotes") return lang === "en" ? "Sent Quotes" : "Cotizaciones";
+  if (key === "admin") return "Admin";
+  return T[lang]?.[key] ?? T.es[key] ?? key;
+}
+
+function tabKeyFromLabel(label, lang) {
+  if (label === "Sent Quotes" || label === "Cotizaciones") return "sentQuotes";
+  if (label === "Admin") return "admin";
+  return TAB_KEYS.find((k) => T[lang]?.[k] === label || T.es[k] === label) ?? "tabResumen";
+}
+
 function ShopPortal({ user, onRequireAuth }) {
   const { lang } = useLang();
   const t = useT();
   const demoQR = lang === "en" ? quoteRequestsEn : quoteRequests;
-  const [active, setActive] = useState(() => T[lang]?.tabResumen ?? "Resumen");
-
-  useEffect(() => {
-    setActive(T[lang]?.tabResumen ?? T.es.tabResumen);
-  }, [lang]);
+  const [activeKey, setActiveKey] = useState("tabResumen");
+  const active = tabLabel(activeKey, lang);
+  const setActive = (label) => setActiveKey(tabKeyFromLabel(label, lang));
   const [selectedRequest, setSelectedRequest] = useState(null);
   const [savedRequests, setSavedRequests] = useState([]);
   const [shopProfile, setShopProfile] = useState(null);

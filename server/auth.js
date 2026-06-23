@@ -2,10 +2,10 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { findUserById } from "./database.js";
 
-const fallbackSecret = "repairscout-local-development-only";
-
 function secret() {
-  return process.env.AUTH_SECRET || fallbackSecret;
+  const s = process.env.AUTH_SECRET;
+  if (!s) throw new Error("AUTH_SECRET environment variable is required");
+  return s;
 }
 
 export function authConfigured() {

@@ -56,7 +56,7 @@ export async function startPartInquiryCall({ inquiryId, partName, vehicle, store
   const response = await fetch(`${BLAND_BASE}/calls`, {
     method: "POST",
     headers: {
-      Authorization: process.env.BLAND_API_KEY,
+      Authorization: `Bearer ${process.env.BLAND_API_KEY}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({

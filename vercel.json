@@ -14,7 +14,7 @@
   "crons": [
     {
       "path": "/api/cron/check-tracking",
-      "schedule": "0 14,18,22 * * *"
+      "schedule": "0 14 * * *"
     }
   ]
 }

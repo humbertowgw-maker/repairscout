@@ -57,7 +57,10 @@ const app = express();
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const projectDir = path.resolve(currentDir, "..");
 
-app.use(cors());
+app.use(cors({
+  origin: process.env.APP_URL || "http://localhost:4311",
+  credentials: true,
+}));
 // Capture raw body for Stripe webhook signature verification
 app.use(express.json({
   limit: "1mb",
@@ -340,8 +343,8 @@ const quoteInput = z.object({
   diagnosisSummary: z.string().max(1000).optional(),
 });
 
-app.get("/api/quote-requests", async (request, response) => {
-  const shopName = request.user?.role === "shop" ? request.user.shopName : undefined;
+app.get("/api/quote-requests", requireAuth, async (request, response) => {
+  const shopName = request.user.role === "shop" ? request.user.shopName : undefined;
   response.json({ quoteRequests: await listQuoteRequests(shopName) });
 });
 
@@ -436,7 +439,7 @@ const quoteSendInput = z.object({
   language: z.string().max(5).optional(),
 });
 
-app.post("/api/quotes/send", async (request, response) => {
+app.post("/api/quotes/send", requireAuth, async (request, response) => {
   const parsed = quoteSendInput.safeParse(request.body);
   if (!parsed.success) {
     return response.status(400).json({ error: "Faltan datos para enviar la cotización." });
@@ -539,6 +542,9 @@ app.get("/api/quotes/:id", requireAuth, async (request, response) => {
   }
   const quote = await getItemizedQuoteById(request.params.id).catch(() => null);
   if (!quote) return response.status(404).json({ error: "Cotización no encontrada." });
+  if (request.user.role === "shop" && quote.userId !== request.user.id) {
+    return response.status(403).json({ error: "Acceso no autorizado." });
+  }
   response.json({ quote });
 });
 
@@ -548,6 +554,9 @@ app.patch("/api/quotes/:id/tracking", requireAuth, async (request, response) => 
   if (request.user.role !== "shop") {
     return response.status(403).json({ error: "Solo el taller puede actualizar el seguimiento." });
   }
+  const ownerCheck = await getItemizedQuoteById(request.params.id).catch(() => null);
+  if (!ownerCheck) return response.status(404).json({ error: "Cotización no encontrada." });
+  if (ownerCheck.userId !== request.user.id) return response.status(403).json({ error: "Acceso no autorizado." });
   const { trackingNumber, carrier } = request.body || {};
   if (!trackingNumber?.trim()) return response.status(400).json({ error: "Ingresa un número de rastreo." });
   const updated = await setTrackingInfo(request.params.id, trackingNumber.trim(), (carrier || "").trim());
@@ -561,6 +570,9 @@ app.post("/api/quotes/:id/invoice", requireAuth, async (request, response) => {
   if (request.user.role !== "shop") {
     return response.status(403).json({ error: "Solo el taller puede enviar facturas." });
   }
+  const ownerCheckInv = await getItemizedQuoteById(request.params.id).catch(() => null);
+  if (!ownerCheckInv) return response.status(404).json({ error: "Cotización no encontrada." });
+  if (ownerCheckInv.userId !== request.user.id) return response.status(403).json({ error: "Acceso no autorizado." });
   const { paymentType, depositPct, invoiceTotal } = request.body || {};
   const paymentAmount = paymentType === "deposit"
     ? (invoiceTotal * (depositPct || 50) / 100)
@@ -604,6 +616,9 @@ app.patch("/api/quotes/:id/repair-stage", requireAuth, async (request, response)
   if (request.user.role !== "shop") {
     return response.status(403).json({ error: "Solo el taller puede actualizar el estado de la reparación." });
   }
+  const ownerCheckStage = await getItemizedQuoteById(request.params.id).catch(() => null);
+  if (!ownerCheckStage) return response.status(404).json({ error: "Cotización no encontrada." });
+  if (ownerCheckStage.userId !== request.user.id) return response.status(403).json({ error: "Acceso no autorizado." });
   const parsed = repairStageInput.safeParse(request.body);
   if (!parsed.success) return response.status(400).json({ error: "Estado de reparación no válido." });
   const updated = await updateRepairStage({ id: request.params.id, stage: parsed.data.stage });
@@ -632,7 +647,8 @@ app.patch("/api/quotes/:id/repair-stage", requireAuth, async (request, response)
 
 app.get("/api/cron/check-tracking", async (request, response) => {
   const authHeader = request.headers["authorization"] || "";
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET || "rs-cron"}`) {
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     return response.status(401).json({ error: "Unauthorized." });
   }
   // Fetch all In Transit work orders
@@ -1090,6 +1106,11 @@ app.post("/api/parts/verify", rateLimit({ key: "bland", windowMs: 60 * 1000, max
 
 // Bland.ai webhook — called when each call finishes
 app.post("/api/bland/webhook", async (request, response) => {
+  const webhookSecret = process.env.BLAND_WEBHOOK_SECRET;
+  const providedSecret = request.headers["x-bland-secret"] || request.query.secret;
+  if (!webhookSecret || providedSecret !== webhookSecret) {
+    return response.status(401).json({ error: "Unauthorized" });
+  }
   response.json({ received: true }); // respond fast
 
   try {

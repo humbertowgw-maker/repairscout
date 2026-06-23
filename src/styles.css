@@ -720,3 +720,310 @@ select { width: 100%; padding: 10px; }
   .lp-cta-card { width: 100%; }
   .lp-bottom-btns .lp-cta-card { width: 100%; }
 }
+
+/* Mobile usability pass: keep core flows thumb-friendly and avoid squeezed desktop layouts. */
+@media (max-width: 780px) {
+  body { overflow-x: hidden; }
+  button, input, textarea, select { font-size: 16px; }
+  .primary, .outline, .requested, .vehicle-field, .quick-symptoms button, .role-picker button {
+    min-height: 44px;
+  }
+
+  .topbar {
+    height: 64px;
+    padding: 0 14px;
+  }
+  .brand { font-size: 18px; }
+  .brand-mark { width: 34px; height: 34px; border-radius: 10px; }
+  .mobile-menu {
+    width: 42px;
+    height: 42px;
+    display: grid;
+    place-items: center;
+    border-radius: 10px;
+    color: var(--ink);
+  }
+  .main-nav {
+    top: 60px;
+    left: 10px;
+    right: 10px;
+    border-radius: 16px;
+    padding: 10px;
+  }
+  .main-nav.open {
+    display: grid;
+    gap: 6px;
+  }
+  .main-nav button {
+    min-height: 44px;
+    border-radius: 10px;
+    padding: 11px 12px;
+  }
+  .main-nav button.active {
+    background: var(--green-pale);
+  }
+  .main-nav.open ~ .top-actions {
+    position: absolute;
+    top: 222px;
+    left: 10px;
+    right: 10px;
+    z-index: 21;
+    display: grid;
+    grid-template-columns: 74px 1fr;
+    gap: 8px;
+    margin: 0;
+    padding: 10px;
+    background: white;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    box-shadow: 0 15px 40px rgba(0,0,0,.14);
+  }
+  .main-nav.open ~ .top-actions .text-button,
+  .main-nav.open ~ .top-actions .account-chip,
+  .main-nav.open ~ .top-actions .primary {
+    min-height: 44px;
+    justify-content: center;
+  }
+  .main-nav.open ~ .top-actions .text-button,
+  .main-nav.open ~ .top-actions .account-chip {
+    grid-column: 2;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+  }
+  .main-nav.open ~ .top-actions .primary {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .customer-hero {
+    min-height: auto;
+    padding: 34px 16px 30px;
+    gap: 24px;
+  }
+  .hero-copy h1 {
+    font-size: clamp(34px, 11vw, 44px);
+    line-height: 1.02;
+    letter-spacing: -1.8px;
+    margin: 14px 0 14px;
+  }
+  .hero-copy > p {
+    font-size: 15px;
+    line-height: 1.55;
+  }
+  .trust-row {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    margin-top: 22px;
+  }
+  .intake-card {
+    border-radius: 18px;
+    padding: 18px;
+  }
+  .intake-head {
+    margin-bottom: 16px;
+  }
+  .intake-head h2 {
+    font-size: 19px;
+  }
+  .quick-symptoms {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  .quick-symptoms button {
+    border-radius: 12px;
+    white-space: normal;
+  }
+  .progress-strip {
+    position: sticky;
+    top: 64px;
+    z-index: 10;
+    padding: 10px 12px;
+    scroll-snap-type: x mandatory;
+  }
+  .progress-strip button {
+    min-width: 132px;
+    scroll-snap-align: start;
+  }
+  .results-section {
+    padding: 40px 16px;
+  }
+  .section-heading h2 {
+    font-size: clamp(25px, 8vw, 32px);
+  }
+  .safety-alert {
+    min-width: 0;
+    width: 100%;
+  }
+  .diagnosis-card {
+    border-radius: 16px;
+  }
+  .title-line {
+    gap: 8px;
+  }
+  .title-line .status {
+    align-self: flex-start;
+  }
+  .estimate-card {
+    position: static;
+    border-radius: 18px;
+  }
+  .shop-card {
+    border-radius: 16px;
+    padding: 18px;
+  }
+  .consent-box {
+    margin: 0 0 16px;
+    border-radius: 14px;
+  }
+
+  .shop-shell {
+    display: block;
+  }
+  .shop-sidebar {
+    position: sticky;
+    top: 0;
+    z-index: 19;
+    width: 100%;
+    height: auto;
+    flex-basis: auto;
+    padding: 12px;
+    display: block;
+    overflow-x: auto;
+  }
+  .shop-sidebar .brand {
+    display: none;
+  }
+  .shop-identity {
+    margin: 0 0 10px;
+    padding: 10px;
+    justify-content: flex-start;
+  }
+  .shop-identity div,
+  .shop-identity svg {
+    display: flex;
+  }
+  .shop-identity strong {
+    font-size: 12px;
+  }
+  .shop-sidebar nav {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+    scrollbar-width: none;
+  }
+  .shop-sidebar nav::-webkit-scrollbar {
+    display: none;
+  }
+  .shop-sidebar nav button,
+  .shop-sidebar nav button:not(.active) i {
+    font-size: 11px;
+  }
+  .shop-sidebar nav button {
+    flex: 0 0 auto;
+    min-height: 42px;
+    padding: 10px 12px;
+    justify-content: flex-start;
+    white-space: nowrap;
+  }
+  .shop-sidebar nav button svg {
+    width: 17px;
+    height: 17px;
+  }
+  .shop-sidebar nav button i {
+    margin-left: 4px;
+  }
+  .shop-header {
+    height: auto;
+    min-height: 72px;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 16px;
+  }
+  .shop-header h1 {
+    font-size: 20px;
+  }
+  .shop-header-actions {
+    align-self: center;
+  }
+  .shop-content {
+    padding: 16px 14px 96px;
+  }
+  .metric-grid,
+  .shop-columns,
+  .shop-bottom-grid {
+    grid-template-columns: 1fr;
+  }
+  .metric-grid article {
+    border-radius: 14px;
+  }
+  .panel {
+    border-radius: 16px;
+  }
+  .panel-title {
+    align-items: flex-start;
+    gap: 12px;
+    padding: 16px;
+  }
+  .request-row {
+    align-items: flex-start;
+    padding: 15px;
+    border-radius: 0;
+  }
+  .request-main > span {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .timeline {
+    padding: 0 14px 16px;
+  }
+  .ai-workbench {
+    border-radius: 16px;
+  }
+}
+
+@media (max-width: 560px) {
+  .modal-backdrop,
+  .modal-backdrop.centered {
+    align-items: flex-end;
+    justify-content: center;
+    padding: 0;
+  }
+  .auth-modal,
+  .quote-drawer {
+    width: 100%;
+    max-width: none;
+    max-height: calc(100dvh - 12px);
+    height: auto;
+    border-radius: 22px 22px 0 0;
+    padding: 24px 18px calc(22px + env(safe-area-inset-bottom));
+  }
+  .quote-drawer {
+    min-height: 78dvh;
+  }
+  .drawer-close {
+    right: 14px;
+    top: 14px;
+    width: 40px;
+    height: 40px;
+  }
+  .legal-page {
+    padding: 34px 16px;
+  }
+  .legal-card {
+    border-radius: 18px;
+    padding: 24px 18px;
+  }
+  .site-footer {
+    gap: 14px;
+  }
+  .site-footer nav {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+  }
+  .site-footer button {
+    min-height: 40px;
+  }
+}

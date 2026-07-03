@@ -17,6 +17,7 @@ const initialData = {
   phoneVerifications: {},
   pendingDiagnoses: {},
   partsInquiries: {},
+  plans: [],
 };
 
 async function ensureStore() {

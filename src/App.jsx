@@ -95,6 +95,8 @@ import {
   getAdminUsers,
   setAdminUserRole,
   getAdminQuotes,
+  getAdminPlans,
+  updateAdminPlan,
   setTrackingInfo,
   sendInvoice,
 } from "./api";
@@ -2565,6 +2567,7 @@ function CustomerPortal({ user, onRequireAuth }) {
   const [zip, setZip] = useState("95814");
   const [radius, setRadius] = useState(t("r25"));
   const [requestedShops, setRequestedShops] = useState([]);
+  const [vehicleEntryMode, setVehicleEntryMode] = useState("vin");
   const [vin, setVin] = useState("");
   const [vehicle, setVehicle] = useState({ year: "2019", make: "Honda", model: "Accord", trim: "Sport", engine: "1.5L Turbo" });
   const [mileage, setMileage] = useState("62,410");
@@ -2598,6 +2601,11 @@ function CustomerPortal({ user, onRequireAuth }) {
     try { setVehicle(await decodeVin(vin)); }
     catch (e) { setError(e.message); }
     finally { setVinLoading(false); }
+  };
+
+  const updateVehicleField = (field, value) => {
+    setVehicle((current) => ({ ...current, [field]: value }));
+    setVehicleSaved(false);
   };
 
   const runAssessment = () => {
@@ -2687,13 +2695,57 @@ function CustomerPortal({ user, onRequireAuth }) {
             <div><span className="step-label">{t("step1of4")}</span><h2>{t("intakeTitle")}</h2></div>
             <span className="ai-orb"><Bot size={23} /></span>
           </div>
-          <label htmlFor="vin">{t("vinLabel")}</label>
-          <div className="vin-row">
-            <input id="vin" maxLength="17" value={vin} onChange={(e) => setVin(e.target.value.toUpperCase())} placeholder={t("vinPlaceholder")} />
-            <button className="outline" onClick={lookupVin} disabled={vinLoading || vin.length !== 17}>
-              {vinLoading ? t("vinLoading") : t("vinBtn")}
+          <div className="vehicle-entry-toggle" role="tablist" aria-label={t("manualVehicleLabel")}>
+            <button
+              type="button"
+              className={vehicleEntryMode === "vin" ? "active" : ""}
+              onClick={() => setVehicleEntryMode("vin")}
+              aria-selected={vehicleEntryMode === "vin"}
+            >
+              {t("vehicleEntryVin")}
+            </button>
+            <button
+              type="button"
+              className={vehicleEntryMode === "manual" ? "active" : ""}
+              onClick={() => setVehicleEntryMode("manual")}
+              aria-selected={vehicleEntryMode === "manual"}
+            >
+              {t("vehicleEntryManual")}
             </button>
           </div>
+          {vehicleEntryMode === "vin" ? (
+            <>
+              <label htmlFor="vin">{t("vinLabel")}</label>
+              <div className="vin-row">
+                <input id="vin" maxLength="17" value={vin} onChange={(e) => { setVin(e.target.value.toUpperCase()); setVehicleSaved(false); }} placeholder={t("vinPlaceholder")} />
+                <button className="outline" onClick={lookupVin} disabled={vinLoading || vin.length !== 17}>
+                  {vinLoading ? t("vinLoading") : t("vinBtn")}
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <label>{t("manualVehicleLabel")}</label>
+              <div className="manual-vehicle-grid">
+                {[
+                  ["year", t("vehicleYear"), "2019"],
+                  ["make", t("vehicleMake"), "Honda"],
+                  ["model", t("vehicleModel"), "Accord"],
+                  ["trim", `${t("vehicleTrim")} (${t("optionalLabel")})`, "Sport"],
+                  ["engine", `${t("vehicleEngine")} (${t("optionalLabel")})`, "1.5L Turbo"],
+                ].map(([field, label, placeholder]) => (
+                  <label key={field} className={field === "engine" ? "wide" : ""}>
+                    {label}
+                    <input
+                      value={vehicle[field] || ""}
+                      onChange={(e) => updateVehicleField(field, e.target.value)}
+                      placeholder={placeholder}
+                    />
+                  </label>
+                ))}
+              </div>
+            </>
+          )}
           <div className="vehicle-field">
             <span className="vehicle-icon"><Car size={21} /></span>
             <span>
@@ -3252,16 +3304,20 @@ function AdminPanel() {
   const [stats, setStats] = useState(null);
   const [users, setUsers] = useState([]);
   const [quotes, setQuotes] = useState([]);
+  const [plans, setPlans] = useState([]);
   const [activeTab, setActiveTab] = useState("overview");
   const [loading, setLoading] = useState(true);
   const [roleUpdating, setRoleUpdating] = useState("");
+  const [planSaving, setPlanSaving] = useState("");
+  const [planMessage, setPlanMessage] = useState("");
 
   useEffect(() => {
-    Promise.allSettled([getAdminStats(), getAdminUsers(), getAdminQuotes()])
-      .then(([s, u, q]) => {
+    Promise.allSettled([getAdminStats(), getAdminUsers(), getAdminQuotes(), getAdminPlans()])
+      .then(([s, u, q, p]) => {
         if (s.status === "fulfilled") setStats(s.value);
         if (u.status === "fulfilled") setUsers(u.value.users || []);
         if (q.status === "fulfilled") setQuotes(q.value.quotes || []);
+        if (p.status === "fulfilled") setPlans(p.value.plans || []);
       })
       .finally(() => setLoading(false));
   }, []);
@@ -3275,7 +3331,37 @@ function AdminPanel() {
     finally { setRoleUpdating(""); }
   };
 
+  const updatePlanField = (id, field, value) => {
+    setPlans((prev) => prev.map((plan) => plan.id === id ? { ...plan, [field]: value } : plan));
+    setPlanMessage("");
+  };
+
+  const savePlan = async (plan) => {
+    setPlanSaving(plan.id);
+    setPlanMessage("");
+    try {
+      const payload = {
+        ...plan,
+        priceMonthly: Number(plan.priceMonthly) || 0,
+        requestLimit: Number(plan.requestLimit) || 0,
+        diagnosisLimit: Number(plan.diagnosisLimit) || 0,
+        quoteLimit: Number(plan.quoteLimit) || 0,
+        features: Array.isArray(plan.features)
+          ? plan.features
+          : String(plan.features || "").split(",").map((item) => item.trim()).filter(Boolean),
+      };
+      const result = await updateAdminPlan(plan.id, payload);
+      setPlans((prev) => prev.map((item) => item.id === plan.id ? result.plan : item));
+      setPlanMessage(isEn ? "Plan saved." : "Plan guardado.");
+    } catch (e) {
+      setPlanMessage(e.message);
+    } finally {
+      setPlanSaving("");
+    }
+  };
+
   const STAT_DARK = { background: "#0d1829", border: "1px solid #1e2d47", borderRadius: 10, padding: "16px 18px" };
+  const FIELD_STYLE = { background: "#101b2d", color: "#e2e8f0", border: "1px solid #334155", borderRadius: 6, fontSize: 12, padding: "8px 10px", width: "100%" };
 
   if (loading) return <section className="panel"><p style={{ color: "#94a3b8", padding: 24 }}>Loading admin data…</p></section>;
 
@@ -3289,8 +3375,8 @@ function AdminPanel() {
       </div>
 
       {/* Tab switcher */}
-      <div style={{ display: "flex", gap: 6, marginBottom: 20 }}>
-        {[["overview", isEn ? "Overview" : "Resumen"], ["users", isEn ? "Users" : "Usuarios"], ["quotes", isEn ? "All Quotes" : "Cotizaciones"]].map(([key, label]) => (
+      <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
+        {[["overview", isEn ? "Overview" : "Resumen"], ["plans", isEn ? "Plans" : "Planes"], ["users", isEn ? "Users" : "Usuarios"], ["quotes", isEn ? "All Quotes" : "Cotizaciones"]].map(([key, label]) => (
           <button key={key} onClick={() => setActiveTab(key)} style={{
             padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer",
             background: activeTab === key ? "#a855f7" : "#1e2d47", color: "#fff",
@@ -3326,6 +3412,87 @@ function AdminPanel() {
             </div>
           </div>
         </>
+      )}
+
+      {/* ── Plans ── */}
+      {activeTab === "plans" && (
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
+            <p style={{ fontSize: 11, color: "#64748b", margin: 0 }}>
+              {isEn ? "Adjust driver and shop plans, pricing, usage limits, and availability." : "Ajusta planes de conductores y talleres, precios, límites y disponibilidad."}
+            </p>
+            {planMessage && <span style={{ color: planMessage.includes("saved") || planMessage.includes("guardado") ? "#22c55e" : "#f87171", fontSize: 11, fontWeight: 700 }}>{planMessage}</span>}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12 }}>
+            {plans.map((plan) => (
+              <article key={plan.id} style={{ ...STAT_DARK, display: "grid", gap: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                  <div>
+                    <span style={{ fontSize: 10, color: plan.audience === "shop" ? "#60a5fa" : "#4ade80", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".08em" }}>{plan.audience}</span>
+                    <h3 style={{ margin: "3px 0 0", color: "#f1f5f9", fontSize: 16 }}>{plan.name}</h3>
+                  </div>
+                  <label style={{ display: "flex", alignItems: "center", gap: 7, margin: 0, color: "#94a3b8", fontSize: 11 }}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(plan.active)}
+                      onChange={(e) => updatePlanField(plan.id, "active", e.target.checked)}
+                      style={{ width: "auto" }}
+                    />
+                    {isEn ? "Active" : "Activo"}
+                  </label>
+                </div>
+                <label style={{ margin: 0, color: "#94a3b8", fontSize: 10 }}>
+                  {isEn ? "Plan name" : "Nombre del plan"}
+                  <input style={{ ...FIELD_STYLE, marginTop: 5 }} value={plan.name || ""} onChange={(e) => updatePlanField(plan.id, "name", e.target.value)} />
+                </label>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
+                  <label style={{ margin: 0, color: "#94a3b8", fontSize: 10 }}>
+                    {isEn ? "Monthly price" : "Precio mensual"}
+                    <input type="number" min="0" style={{ ...FIELD_STYLE, marginTop: 5 }} value={plan.priceMonthly ?? 0} onChange={(e) => updatePlanField(plan.id, "priceMonthly", e.target.value)} />
+                  </label>
+                  <label style={{ margin: 0, color: "#94a3b8", fontSize: 10 }}>
+                    {isEn ? "Audience" : "Audiencia"}
+                    <select style={{ ...FIELD_STYLE, marginTop: 5 }} value={plan.audience} onChange={(e) => updatePlanField(plan.id, "audience", e.target.value)}>
+                      <option value="driver">{isEn ? "Driver" : "Conductor"}</option>
+                      <option value="shop">{isEn ? "Shop" : "Taller"}</option>
+                    </select>
+                  </label>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
+                  {[
+                    ["requestLimit", isEn ? "Requests" : "Solicitudes"],
+                    ["diagnosisLimit", isEn ? "Diagnoses" : "Diagnósticos"],
+                    ["quoteLimit", isEn ? "Quotes" : "Cotizaciones"],
+                  ].map(([field, label]) => (
+                    <label key={field} style={{ margin: 0, color: "#94a3b8", fontSize: 10 }}>
+                      {label}
+                      <input type="number" min="0" style={{ ...FIELD_STYLE, marginTop: 5 }} value={plan[field] ?? 0} onChange={(e) => updatePlanField(plan.id, field, e.target.value)} />
+                    </label>
+                  ))}
+                </div>
+                <label style={{ margin: 0, color: "#94a3b8", fontSize: 10 }}>
+                  {isEn ? "Description" : "Descripción"}
+                  <textarea
+                    style={{ ...FIELD_STYLE, resize: "vertical", minHeight: 58, marginTop: 5, fontFamily: "inherit" }}
+                    value={plan.description || ""}
+                    onChange={(e) => updatePlanField(plan.id, "description", e.target.value)}
+                  />
+                </label>
+                <label style={{ margin: 0, color: "#94a3b8", fontSize: 10 }}>
+                  {isEn ? "Features, comma separated" : "Beneficios, separados por coma"}
+                  <input
+                    style={{ ...FIELD_STYLE, marginTop: 5 }}
+                    value={Array.isArray(plan.features) ? plan.features.join(", ") : plan.features || ""}
+                    onChange={(e) => updatePlanField(plan.id, "features", e.target.value)}
+                  />
+                </label>
+                <button className="primary" onClick={() => savePlan(plan)} disabled={planSaving === plan.id} style={{ marginTop: 2 }}>
+                  {planSaving === plan.id ? (isEn ? "Saving..." : "Guardando...") : (isEn ? "Save plan" : "Guardar plan")} <Check size={16} />
+                </button>
+              </article>
+            ))}
+          </div>
+        </div>
       )}
 
       {/* ── Users ── */}
@@ -3407,7 +3574,7 @@ function ShopPortal({ user, onRequireAuth }) {
   const t = useT();
   const isEn = lang === "en";
   const demoQR = isEn ? quoteRequestsEn : quoteRequests;
-  const [activeKey, setActiveKey] = useState("tabResumen");
+  const [activeKey, setActiveKey] = useState(user?.role === "admin" ? "admin" : "tabResumen");
   const active = tabLabel(activeKey, lang);
   const setActive = (label) => setActiveKey(tabKeyFromLabel(label, lang));
   const [selectedRequest, setSelectedRequest] = useState(null);
@@ -3598,7 +3765,7 @@ function ShopPortal({ user, onRequireAuth }) {
           </section>
 
           {/* Profile panel — shown when tab is Perfil OR shop not yet claimed */}
-          {(active === t("tabPerfil") || !shopProfile?.claimed) && (
+          {(active === t("tabPerfil") || (!shopProfile?.claimed && user?.role !== "admin")) && (
             <ShopProfilePanel profileForm={profileForm} setProfileForm={setProfileForm} onSave={saveProfile} profileSaving={profileSaving} profileMessage={profileMessage} />
           )}
 
@@ -4128,7 +4295,7 @@ function App() {
   useEffect(() => {
     if (!window.localStorage.getItem("repairscout_token")) return;
     getCurrentUser()
-      .then(({ user: u }) => { setUser(u); setPortal(u.role === "shop" ? "shop" : "customer"); })
+      .then(({ user: u }) => { setUser(u); setPortal(["shop", "admin"].includes(u.role) ? "shop" : "customer"); })
       .catch(() => window.localStorage.removeItem("repairscout_token"));
   }, []);
 
@@ -4159,7 +4326,7 @@ function App() {
             onAuth={() => setAuthOpen(true)}
             setPage={setPage}
           />
-          {authOpen && <AuthModal onClose={() => setAuthOpen(false)} onAuthenticated={(u) => { setUser(u); setPortal(u.role === "shop" ? "shop" : "customer"); }} />}
+          {authOpen && <AuthModal onClose={() => setAuthOpen(false)} onAuthenticated={(u) => { setUser(u); setPortal(["shop", "admin"].includes(u.role) ? "shop" : "customer"); }} />}
         </>
       ) : (
         <>
@@ -4173,7 +4340,7 @@ function App() {
             : <LegalPage page={page} setPage={setPage} />
           }
           {(portal === "customer" || portal === "shop" || page !== "home") && <Footer setPage={setPage} />}
-          {authOpen && <AuthModal onClose={() => setAuthOpen(false)} onAuthenticated={(u) => { setUser(u); setPortal(u.role === "shop" ? "shop" : "customer"); }} />}
+          {authOpen && <AuthModal onClose={() => setAuthOpen(false)} onAuthenticated={(u) => { setUser(u); setPortal(["shop", "admin"].includes(u.role) ? "shop" : "customer"); }} />}
         </>
       )}
     </LangCtx.Provider>

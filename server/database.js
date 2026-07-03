@@ -11,6 +11,77 @@ const pool = process.env.DATABASE_URL
 
 let initialized = false;
 
+const DEFAULT_PLANS = [
+  {
+    id: "driver-free",
+    audience: "driver",
+    name: "Driver Free",
+    priceMonthly: 0,
+    requestLimit: 3,
+    diagnosisLimit: 1,
+    quoteLimit: 3,
+    active: true,
+    description: "Free driver intake with limited AI diagnosis and quote requests.",
+    features: ["1 free AI diagnosis", "3 quote requests", "Vehicle save"],
+  },
+  {
+    id: "driver-plus",
+    audience: "driver",
+    name: "Driver Plus",
+    priceMonthly: 9,
+    requestLimit: 15,
+    diagnosisLimit: 10,
+    quoteLimit: 15,
+    active: true,
+    description: "More diagnostics, saved history, and expanded quote reach for drivers.",
+    features: ["10 AI diagnoses", "15 quote requests", "Priority shop matching"],
+  },
+  {
+    id: "shop-starter",
+    audience: "shop",
+    name: "Shop Starter",
+    priceMonthly: 49,
+    requestLimit: 25,
+    diagnosisLimit: 50,
+    quoteLimit: 25,
+    active: true,
+    description: "Starter shop inbox with quote handling and Scout diagnostic support.",
+    features: ["25 customer requests", "50 Scout workbench runs", "Itemized quotes"],
+  },
+  {
+    id: "shop-pro",
+    audience: "shop",
+    name: "Shop Pro",
+    priceMonthly: 149,
+    requestLimit: 100,
+    diagnosisLimit: 250,
+    quoteLimit: 100,
+    active: true,
+    description: "Higher shop volume with richer automation and team operations.",
+    features: ["100 customer requests", "250 Scout workbench runs", "Priority placement"],
+  },
+];
+
+function normalizePlan(plan) {
+  return {
+    id: plan.id,
+    audience: plan.audience,
+    name: plan.name,
+    priceMonthly: Number(plan.priceMonthly ?? plan.price_monthly ?? 0),
+    requestLimit: Number(plan.requestLimit ?? plan.request_limit ?? 0),
+    diagnosisLimit: Number(plan.diagnosisLimit ?? plan.diagnosis_limit ?? 0),
+    quoteLimit: Number(plan.quoteLimit ?? plan.quote_limit ?? 0),
+    active: Boolean(plan.active),
+    description: plan.description || "",
+    features: Array.isArray(plan.features) ? plan.features : [],
+    updatedAt: plan.updatedAt || plan.updated_at || null,
+  };
+}
+
+function mapPlanRow(row) {
+  return normalizePlan(row);
+}
+
 async function ensureDatabase() {
   if (!pool || initialized) return;
 
@@ -112,6 +183,20 @@ async function ensureDatabase() {
       created_at timestamptz not null default now()
     );
 
+    create table if not exists service_plans (
+      id text primary key,
+      audience text not null check (audience in ('driver', 'shop')),
+      name text not null,
+      price_monthly numeric(8,2) not null default 0,
+      request_limit integer not null default 0,
+      diagnosis_limit integer not null default 0,
+      quote_limit integer not null default 0,
+      active boolean not null default true,
+      description text not null default '',
+      features text[] not null default '{}',
+      updated_at timestamptz not null default now()
+    );
+
     create table if not exists pending_diagnoses (
       id uuid primary key,
       phone text not null,
@@ -149,6 +234,27 @@ async function ensureDatabase() {
 
     create index if not exists parts_inquiries_batch_id on parts_inquiries(batch_id);
   `);
+
+  for (const plan of DEFAULT_PLANS) {
+    await pool.query(
+      `insert into service_plans
+        (id, audience, name, price_monthly, request_limit, diagnosis_limit, quote_limit, active, description, features)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       on conflict (id) do nothing`,
+      [
+        plan.id,
+        plan.audience,
+        plan.name,
+        plan.priceMonthly,
+        plan.requestLimit,
+        plan.diagnosisLimit,
+        plan.quoteLimit,
+        plan.active,
+        plan.description,
+        plan.features,
+      ],
+    );
+  }
 
   initialized = true;
 }
@@ -938,6 +1044,63 @@ export async function setUserRole(id, role) {
     users: (store.users || []).map((u) => u.id === id ? { ...u, role } : u),
   }));
   return findUserById(id);
+}
+
+export async function listPlans() {
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query("select * from service_plans order by audience, price_monthly, name");
+    return result.rows.map(mapPlanRow);
+  }
+  const store = await readStore();
+  const plans = (store.plans && store.plans.length ? store.plans : DEFAULT_PLANS).map(normalizePlan);
+  return plans.sort((a, b) => a.audience.localeCompare(b.audience) || a.priceMonthly - b.priceMonthly || a.name.localeCompare(b.name));
+}
+
+export async function updatePlan(id, input) {
+  const currentPlans = await listPlans();
+  const currentPlan = currentPlans.find((plan) => plan.id === id);
+  if (!currentPlan) return null;
+
+  const plan = normalizePlan({
+    ...currentPlan,
+    ...input,
+    id,
+    updatedAt: new Date().toISOString(),
+  });
+
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query(
+      `update service_plans
+       set audience=$2, name=$3, price_monthly=$4, request_limit=$5, diagnosis_limit=$6,
+           quote_limit=$7, active=$8, description=$9, features=$10, updated_at=now()
+       where id=$1
+       returning *`,
+      [
+        plan.id,
+        plan.audience,
+        plan.name,
+        plan.priceMonthly,
+        plan.requestLimit,
+        plan.diagnosisLimit,
+        plan.quoteLimit,
+        plan.active,
+        plan.description,
+        plan.features,
+      ],
+    );
+    return mapPlanRow(result.rows[0]);
+  }
+
+  await updateStore((store) => {
+    const existing = store.plans && store.plans.length ? store.plans : DEFAULT_PLANS;
+    return {
+      ...store,
+      plans: existing.map((item) => item.id === id ? plan : item),
+    };
+  });
+  return plan;
 }
 
 export async function getAdminStats() {

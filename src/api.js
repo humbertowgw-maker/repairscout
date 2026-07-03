@@ -169,6 +169,17 @@ export function getAdminQuotes() {
   return request("/api/admin/quotes");
 }
 
+export function getAdminPlans() {
+  return request("/api/admin/plans");
+}
+
+export function updateAdminPlan(id, input) {
+  return request(`/api/admin/plans/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+}
+
 export function searchParts(query, lang, zip, state, gasPrice, mpg) {
   return request("/api/parts/search", { method: "POST", body: JSON.stringify({ query, lang, zip, state, gasPrice, mpg }) });
 }

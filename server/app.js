@@ -28,6 +28,7 @@ import {
   getPhoneVerification,
   getShopProfile,
   listAllUsers,
+  listPlans,
   listQuoteRequests,
   listSentQuotes,
   listVehicles,
@@ -35,6 +36,7 @@ import {
   markPhoneVerified,
   saveDiagnosis,
   setUserRole,
+  updatePlan,
   setTrackingInfo,
   setInvoiceSent,
   setPendingDiagnosisPaid,
@@ -1190,6 +1192,39 @@ app.get("/api/admin/quotes", requireAuth, requireAdmin, async (_req, res) => {
   try {
     const quotes = await listQuoteRequests(null);
     res.json({ quotes });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+const adminPlanInput = z.object({
+  audience: z.enum(["driver", "shop"]),
+  name: z.string().trim().min(2).max(80),
+  priceMonthly: z.coerce.number().min(0).max(9999),
+  requestLimit: z.coerce.number().int().min(0).max(100000),
+  diagnosisLimit: z.coerce.number().int().min(0).max(100000),
+  quoteLimit: z.coerce.number().int().min(0).max(100000),
+  active: z.boolean(),
+  description: z.string().trim().max(500).optional().default(""),
+  features: z.array(z.string().trim().min(1).max(120)).max(12).optional().default([]),
+});
+
+app.get("/api/admin/plans", requireAuth, requireAdmin, async (_req, res) => {
+  try {
+    const plans = await listPlans();
+    res.json({ plans });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put("/api/admin/plans/:id", requireAuth, requireAdmin, async (req, res) => {
+  const parsed = adminPlanInput.safeParse(req.body || {});
+  if (!parsed.success) return res.status(400).json({ error: "Invalid plan settings." });
+  try {
+    const plan = await updatePlan(req.params.id, parsed.data);
+    if (!plan) return res.status(404).json({ error: "Plan not found." });
+    res.json({ plan });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

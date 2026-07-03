@@ -93,10 +93,17 @@ label { display: block; font-size: 12px; font-weight: 700; margin: 15px 0 7px; }
 .vehicle-field > span:nth-child(2) { display: flex; flex-direction: column; flex: 1; gap: 3px; }
 .vehicle-field > svg { color: var(--green); }
 .save-vehicle { display: inline-flex; align-items: center; gap: 5px; border: 0; background: none; color: var(--green); font-size: 10px; font-weight: 800; padding: 7px 2px 0; }
+.vehicle-entry-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 11px; padding: 4px; background: #edf3ef; border-radius: 9px; }
+.vehicle-entry-toggle button { border: 1px solid transparent; border-radius: 7px; padding: 9px 10px; background: transparent; color: #59645f; font-size: 11px; font-weight: 800; }
+.vehicle-entry-toggle button.active { background: white; border-color: var(--line); color: var(--green); box-shadow: 0 5px 15px rgba(16,24,32,.08); }
 .vin-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
 .vin-row input, .plain-input { width: 100%; padding: 11px 12px; text-transform: uppercase; }
 .plain-input { text-transform: none; }
 .vin-row .outline { padding: 10px 13px; }
+.manual-vehicle-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.manual-vehicle-grid label { margin: 0; font-size: 10px; color: var(--muted); }
+.manual-vehicle-grid input { width: 100%; margin-top: 5px; padding: 10px 11px; }
+.manual-vehicle-grid .wide { grid-column: span 2; }
 .form-error { margin: 0 0 12px; padding: 9px 11px; color: #9f3f2d; background: #fff0eb; border: 1px solid #efd1c7; border-radius: 8px; font-size: 11px; }
 button:disabled { cursor: not-allowed; opacity: .58; transform: none !important; }
 .vehicle-field small, .seller-cell small, .part-row small { color: var(--muted); }
@@ -409,6 +416,8 @@ select { width: 100%; padding: 10px; }
   .trust-row { display: grid; }
   .location-grid { grid-template-columns: 1fr; }
   .vin-row { grid-template-columns: 1fr; }
+  .manual-vehicle-grid { grid-template-columns: 1fr; }
+  .manual-vehicle-grid .wide { grid-column: auto; }
   .diagnosis-card { align-items: flex-start; padding: 16px; gap: 13px; }
   .probability { width: 58px; height: 58px; }
   .title-line { align-items: flex-start; }

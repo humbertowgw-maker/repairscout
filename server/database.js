@@ -1010,11 +1010,11 @@ export async function setInvoiceSent(id, paymentStatus, paymentAmount) {
 export async function adminMigrate() {
   if (!pool) return;
   await ensureDatabase();
-  // Widen role check to include 'admin' and seed the admin account
+  // Widen role check to include admin. Admin assignment remains an explicit,
+  // authenticated operation and is never inferred from a hard-coded email.
   await pool.query(`
     alter table users drop constraint if exists users_role_check;
     alter table users add constraint users_role_check check (role in ('driver','shop','admin'));
-    update users set role = 'admin' where email = 'humberto.wgw@gmail.com' and role != 'admin';
   `);
 }
 

@@ -4,7 +4,7 @@ import { findUserById } from "./database.js";
 
 function secret() {
   const s = process.env.AUTH_SECRET;
-  if (!s) throw new Error("AUTH_SECRET environment variable is required");
+  if (!s || s.length < 32) throw new Error("AUTH_SECRET must contain at least 32 characters");
   return s;
 }
 

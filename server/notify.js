@@ -2,7 +2,7 @@
 // Falls back to console simulation when keys are not configured
 
 const RESEND_KEY  = process.env.RESEND_API_KEY;
-const RESEND_FROM = process.env.RESEND_FROM_EMAIL || "repairscout@whiteglovewireless.com";
+const RESEND_FROM = process.env.RESEND_FROM_EMAIL || "repairscout@whitegwireless.com";
 const TWILIO_SID = process.env.TWILIO_ACCOUNT_SID;
 const TWILIO_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_FROM = process.env.TWILIO_FROM_NUMBER;

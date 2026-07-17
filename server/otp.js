@@ -3,8 +3,7 @@ import crypto from "node:crypto";
 export const OTP_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 export function generateOtp() {
-  // Cryptographically random 6-digit code
-  return String(100000 + (crypto.randomBytes(3).readUIntBE(0, 3) % 900000)).padStart(6, "0");
+  return String(crypto.randomInt(100000, 1000000));
 }
 
 const TWILIO_SID   = process.env.TWILIO_ACCOUNT_SID;

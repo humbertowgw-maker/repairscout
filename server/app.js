@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import cors from "cors";
 import express from "express";
+import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import { z } from "zod";
 import { authConfigured, createToken, hashPassword, optionalAuth, requireAuth, verifyPassword } from "./auth.js";
@@ -93,38 +94,19 @@ app.use((_request, response, next) => {
   next();
 });
 
-const rateWindows = new Map();
+const limiter = (windowMs, max) => rateLimit({
+  windowMs,
+  limit: max,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: { error: "Demasiadas solicitudes. Intenta de nuevo en unos minutos." },
+});
 
-function rateLimit({ key, windowMs, max }) {
-  return (request, response, next) => {
-    const identity = request.ip || request.get("x-forwarded-for") || "unknown";
-    const bucketKey = `${key}:${identity}`;
-    const now = Date.now();
-    const current = rateWindows.get(bucketKey);
-
-    if (!current || current.resetAt <= now) {
-      rateWindows.set(bucketKey, { count: 1, resetAt: now + windowMs });
-      return next();
-    }
-
-    current.count += 1;
-    if (current.count > max) {
-      const retryAfter = Math.ceil((current.resetAt - now) / 1000);
-      response.setHeader("Retry-After", String(retryAfter));
-      return response.status(429).json({
-        error: "Demasiadas solicitudes. Intenta de nuevo en unos minutos.",
-      });
-    }
-
-    return next();
-  };
-}
-
-app.use("/api", rateLimit({ key: "api", windowMs: 15 * 60 * 1000, max: 240 }));
-app.use("/api/auth", rateLimit({ key: "auth", windowMs: 15 * 60 * 1000, max: 25 }));
-app.use("/api/diagnose", rateLimit({ key: "diagnose", windowMs: 15 * 60 * 1000, max: 30 }));
-app.use("/api/quote-requests", rateLimit({ key: "quotes", windowMs: 15 * 60 * 1000, max: 60 }));
-app.use("/api/shop-profile", rateLimit({ key: "shop-profile", windowMs: 15 * 60 * 1000, max: 60 }));
+app.use("/api", limiter(15 * 60 * 1000, 240));
+app.use("/api/auth", limiter(15 * 60 * 1000, 25));
+app.use("/api/diagnose", limiter(15 * 60 * 1000, 30));
+app.use("/api/quote-requests", limiter(15 * 60 * 1000, 60));
+app.use("/api/shop-profile", limiter(15 * 60 * 1000, 60));
 app.use(optionalAuth);
 
 app.get("/api/health", (_request, response) => {
@@ -684,7 +666,7 @@ app.get("/api/cron/check-tracking", async (request, response) => {
 
 // ── OTP: send code ────────────────────────────────────────────────────────────
 
-app.use("/api/otp", rateLimit({ key: "otp", windowMs: 15 * 60 * 1000, max: 10 }));
+app.use("/api/otp", limiter(15 * 60 * 1000, 10));
 
 app.post("/api/otp/send", async (request, response) => {
   const raw = String(request.body?.phone || "").trim();
@@ -733,7 +715,7 @@ app.post("/api/otp/verify", async (request, response) => {
 
 // ── Checkout: start Stripe session ───────────────────────────────────────────
 
-app.use("/api/checkout", rateLimit({ key: "checkout", windowMs: 15 * 60 * 1000, max: 20 }));
+app.use("/api/checkout", limiter(15 * 60 * 1000, 20));
 
 const checkoutStartInput = z.object({
   phone: z.string().min(7).max(20),
@@ -779,7 +761,7 @@ const freeDiagInput = z.object({
   language: z.string().max(5).optional(),
 });
 
-app.post("/api/diagnose/free", rateLimit({ key: "diagnose", windowMs: 15 * 60 * 1000, max: 30 }), async (request, response) => {
+app.post("/api/diagnose/free", limiter(15 * 60 * 1000, 30), async (request, response) => {
   const parsed = freeDiagInput.safeParse(request.body);
   if (!parsed.success) return response.status(400).json({ error: "Faltan datos para el diagnóstico." });
 
@@ -917,7 +899,7 @@ async function callAI(systemPrompt, userPrompt) {
   return null;
 }
 
-app.post("/api/parts/search", rateLimit({ key: "parts-search", windowMs: 60 * 1000, max: 20 }), async (request, response) => {
+app.post("/api/parts/search", limiter(60 * 1000, 20), async (request, response) => {
   const { query, lang, zip, state, gasPrice, mpg } = request.body || {};
   if (!query || typeof query !== "string" || query.trim().length < 2) {
     return response.status(400).json({ error: "Query required." });
@@ -1056,7 +1038,7 @@ const verifySchema = z.object({
   })).min(1).max(5),
 });
 
-app.post("/api/parts/verify", rateLimit({ key: "bland", windowMs: 60 * 1000, max: 10 }), async (request, response) => {
+app.post("/api/parts/verify", limiter(60 * 1000, 10), async (request, response) => {
   const parsed = verifySchema.safeParse(request.body);
   if (!parsed.success) return response.status(400).json({ error: "Invalid request." });
 
@@ -1249,7 +1231,7 @@ app.put("/api/admin/plans/:id", requireAuth, requireAdmin, async (req, res) => {
 if (process.env.VERCEL !== "1") {
   app.use(express.static(path.join(projectDir, "dist")));
   // SPA fallback — also handles /track/:token and /diagnose/result routes
-  app.get("*", (request, response, next) => {
+  app.get("*", limiter(60 * 1000, 300), (request, response, next) => {
     if (request.path.startsWith("/api/")) return next();
     response.sendFile(path.join(projectDir, "dist", "index.html"));
   });

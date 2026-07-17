@@ -109,7 +109,7 @@ app.use("/api/quote-requests", limiter(15 * 60 * 1000, 60));
 app.use("/api/shop-profile", limiter(15 * 60 * 1000, 60));
 app.use(optionalAuth);
 
-app.get("/api/health", (_request, response) => {
+app.get("/api/health", rateLimit({ windowMs: 60 * 1000, limit: 60 }), (_request, response) => {
   const aiProviders = getDiagnosisProviderStatus();
   response.json({
     ok: true,
@@ -129,7 +129,7 @@ const authInput = z.object({
   shopName: z.string().trim().min(2).max(120).optional(),
 });
 
-app.post("/api/auth/register", async (request, response) => {
+app.post("/api/auth/register", rateLimit({ windowMs: 15 * 60 * 1000, limit: 10 }), async (request, response) => {
   const parsed = authInput.safeParse(request.body);
   if (!parsed.success || !parsed.data.name || !parsed.data.role) {
     return response.status(400).json({ error: "Completa el nombre, correo, contraseña y tipo de cuenta." });
@@ -154,7 +154,7 @@ app.post("/api/auth/register", async (request, response) => {
   response.status(201).json({ user, token: createToken(user) });
 });
 
-app.post("/api/auth/login", async (request, response) => {
+app.post("/api/auth/login", rateLimit({ windowMs: 15 * 60 * 1000, limit: 10 }), async (request, response) => {
   const parsed = authInput.pick({ email: true, password: true }).safeParse(request.body);
   if (!parsed.success) {
     return response.status(400).json({ error: "Ingresa un correo y una contraseña válidos." });

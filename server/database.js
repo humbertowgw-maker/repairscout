@@ -515,7 +515,7 @@ export async function listQuoteRequests(shopName) {
   );
 }
 
-// â”€â”€ Itemized quotes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Itemized quotes ────────────────────────────────────────────────────────
 
 function mapIQRow(row) {
   if (!row) return null;
@@ -608,7 +608,25 @@ export async function listSentQuotes(userId) {
   if (pool) {
     await ensureDatabase();
     const values = [];
-    let where = ""…169 tokens truncated…stage = 'Approved' where token = $1 returning *",
+    let where = "";
+    if (userId) { values.push(userId); where = "where user_id = $1"; }
+    const result = await pool.query(
+      `select * from itemized_quotes ${where} order by created_at desc limit 100`,
+      values,
+    );
+    return result.rows.map(mapIQRow);
+  }
+  const store = await readStore();
+  const all = store.itemizedQuotes || [];
+  return userId ? all.filter((q) => q.userId === userId) : all;
+}
+
+export async function approveQuoteByToken(token) {
+  const now = new Date().toISOString();
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query(
+      "update itemized_quotes set customer_approved = true, approved_at = $2, repair_stage = 'Approved' where token = $1 returning *",
       [token, now],
     );
     return mapIQRow(result.rows[0]);
@@ -653,7 +671,7 @@ export async function updateQuoteRequestStatus({ id, shopName, status }) {
   return updatedQuote;
 }
 
-// â”€â”€ Phone OTP â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Phone OTP ────────────────────────────────────────────────────────────────
 
 export async function upsertPhoneVerification({ phone, code, expiresAt }) {
   if (pool) {
@@ -730,7 +748,7 @@ export async function markPhoneUsedFree(phone) {
   }));
 }
 
-// â”€â”€ Pending diagnoses (Stripe flow) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Pending diagnoses (Stripe flow) ──────────────────────────────────────────
 
 export async function createPendingDiagnosis({ id, phone, vehicle, mileage, description, zip, language }) {
   if (pool) {
@@ -808,7 +826,7 @@ export async function setPendingDiagnosisResult(id, result) {
   }));
 }
 
-// â”€â”€ Parts inquiries (Bland.ai call tracking) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Parts inquiries (Bland.ai call tracking) ──────────────────────────────────
 
 function mapInquiryRow(row) {
   if (!row) return null;
@@ -919,7 +937,7 @@ export async function getPartsInquiryById(inquiryId) {
   return store.partsInquiries?.[inquiryId] || null;
 }
 
-// â”€â”€ Admin â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Admin ─────────────────────────────────────────────────────────────────────
 
 export async function workOrderMigrate() {
   if (!pool) return;
@@ -1157,4 +1175,3 @@ export async function getPortfolioMetrics() {
       .at(-1) || null,
   };
 }
-

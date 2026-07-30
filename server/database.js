@@ -1139,39 +1139,3 @@ export async function getAdminStats() {
     shopProfiles: (store.shopProfiles || []).length,
   };
 }
-
-export async function getPortfolioMetrics() {
-  if (pool) {
-    await ensureDatabase();
-    const result = await pool.query(`
-      select
-        count(*) filter (where created_at >= now() - interval '7 days')::int
-          as verified_quote_requests_weekly,
-        count(*)::int as quote_requests_total,
-        count(*) filter (
-          where status in ('Cotizada', 'Cita solicitada')
-          and created_at >= now() - interval '7 days'
-        )::int as progressed_quote_requests_weekly,
-        max(created_at) as latest_quote_request_at
-      from quote_requests
-    `);
-    return result.rows[0] || {};
-  }
-
-  const store = await readStore();
-  const quotes = store.quoteRequests || [];
-  const cutoff = Date.now() - (7 * 24 * 60 * 60 * 1000);
-  const weekly = quotes.filter((quote) => new Date(quote.createdAt).getTime() >= cutoff);
-  return {
-    verified_quote_requests_weekly: weekly.length,
-    quote_requests_total: quotes.length,
-    progressed_quote_requests_weekly: weekly.filter(
-      (quote) => ["Cotizada", "Cita solicitada"].includes(quote.status),
-    ).length,
-    latest_quote_request_at: quotes
-      .map((quote) => quote.createdAt)
-      .filter(Boolean)
-      .sort()
-      .at(-1) || null,
-  };
-}

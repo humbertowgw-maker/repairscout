@@ -22,7 +22,6 @@ import {
   databaseMode,
   findUserByEmail,
   getAdminStats,
-  getPortfolioMetrics,
   getItemizedQuoteByToken,
   getItemizedQuoteById,
   getPartsInquiryBatch,
@@ -120,25 +119,6 @@ app.get("/api/health", rateLimit({ windowMs: 60 * 1000, limit: 60 }), (_request,
     authConfigured: authConfigured(),
     timestamp: new Date().toISOString(),
   });
-});
-
-app.get("/api/portfolio-metrics", async (_request, response) => {
-  try {
-    const metrics = await getPortfolioMetrics();
-    response.set("Cache-Control", "public, max-age=0, s-maxage=300, stale-while-revalidate=600");
-    response.json({
-      metric: "verified_quote_requests_weekly",
-      windowDays: 7,
-      verifiedQuoteRequestsWeekly: Number(metrics.verified_quote_requests_weekly || 0),
-      quoteRequestsTotal: Number(metrics.quote_requests_total || 0),
-      progressedQuoteRequestsWeekly: Number(metrics.progressed_quote_requests_weekly || 0),
-      latestQuoteRequestAt: metrics.latest_quote_request_at || null,
-      observedAt: new Date().toISOString(),
-      privacy: "aggregate_only",
-    });
-  } catch {
-    response.status(500).json({ error: "Unable to read portfolio metrics" });
-  }
 });
 
 const authInput = z.object({

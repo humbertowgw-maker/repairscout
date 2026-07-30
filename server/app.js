@@ -22,6 +22,7 @@ import {
   databaseMode,
   findUserByEmail,
   getAdminStats,
+  getPortfolioMetrics,
   getItemizedQuoteByToken,
   getItemizedQuoteById,
   getPartsInquiryBatch,
@@ -121,6 +122,25 @@ app.get("/api/health", rateLimit({ windowMs: 60 * 1000, limit: 60 }), (_request,
   });
 });
 
+app.get("/api/portfolio-metrics", async (_request, response) => {
+  try {
+    const metrics = await getPortfolioMetrics();
+    response.set("Cache-Control", "public, max-age=0, s-maxage=300, stale-while-revalidate=600");
+    response.json({
+      metric: "verified_quote_requests_weekly",
+      windowDays: 7,
+      verifiedQuoteRequestsWeekly: Number(metrics.verified_quote_requests_weekly || 0),
+      quoteRequestsTotal: Number(metrics.quote_requests_total || 0),
+      progressedQuoteRequestsWeekly: Number(metrics.progressed_quote_requests_weekly || 0),
+      latestQuoteRequestAt: metrics.latest_quote_request_at || null,
+      observedAt: new Date().toISOString(),
+      privacy: "aggregate_only",
+    });
+  } catch {
+    response.status(500).json({ error: "Unable to read portfolio metrics" });
+  }
+});
+
 const authInput = z.object({
   name: z.string().trim().min(2).max(100).optional(),
   email: z.string().trim().email().transform((value) => value.toLowerCase()),
@@ -132,7 +152,7 @@ const authInput = z.object({
 app.post("/api/auth/register", rateLimit({ windowMs: 15 * 60 * 1000, limit: 10 }), async (request, response) => {
   const parsed = authInput.safeParse(request.body);
   if (!parsed.success || !parsed.data.name || !parsed.data.role) {
-    return response.status(400).json({ error: "Completa el nombre, correo, contraseña y tipo de cuenta." });
+    return response.status(400).json({ error: "Completa el nombre, correo, contraseÃ±a y tipo de cuenta." });
   }
   if (parsed.data.role === "shop" && !parsed.data.shopName) {
     return response.status(400).json({ error: "Ingresa el nombre del taller." });
@@ -157,12 +177,12 @@ app.post("/api/auth/register", rateLimit({ windowMs: 15 * 60 * 1000, limit: 10 }
 app.post("/api/auth/login", rateLimit({ windowMs: 15 * 60 * 1000, limit: 10 }), async (request, response) => {
   const parsed = authInput.pick({ email: true, password: true }).safeParse(request.body);
   if (!parsed.success) {
-    return response.status(400).json({ error: "Ingresa un correo y una contraseña válidos." });
+    return response.status(400).json({ error: "Ingresa un correo y una contraseÃ±a vÃ¡lidos." });
   }
   const storedUser = await findUserByEmail(parsed.data.email);
   const passwordHash = storedUser?.password_hash || storedUser?.passwordHash;
   if (!storedUser || !(await verifyPassword(parsed.data.password, passwordHash))) {
-    return response.status(401).json({ error: "El correo o la contraseña no son correctos." });
+    return response.status(401).json({ error: "El correo o la contraseÃ±a no son correctos." });
   }
   const user = {
     id: storedUser.id,
@@ -182,7 +202,7 @@ app.get("/api/auth/me", requireAuth, (request, response) => {
 app.get("/api/vehicle/decode", async (request, response) => {
   const vin = String(request.query.vin || "").trim().toUpperCase();
   if (!/^[A-HJ-NPR-Z0-9]{17}$/.test(vin)) {
-    return response.status(400).json({ error: "Ingresa un VIN válido de 17 caracteres." });
+    return response.status(400).json({ error: "Ingresa un VIN vÃ¡lido de 17 caracteres." });
   }
   try {
     const nhtsaResponse = await fetch(
@@ -192,7 +212,7 @@ app.get("/api/vehicle/decode", async (request, response) => {
     const payload = await nhtsaResponse.json();
     const result = payload.Results?.[0];
     if (!result || (!result.Make && !result.Model)) {
-      return response.status(404).json({ error: "No encontramos información para ese VIN." });
+      return response.status(404).json({ error: "No encontramos informaciÃ³n para ese VIN." });
     }
     return response.json({
       vin,
@@ -206,7 +226,7 @@ app.get("/api/vehicle/decode", async (request, response) => {
       driveType: result.DriveType,
     });
   } catch {
-    return response.status(502).json({ error: "El servicio de VIN no está disponible en este momento." });
+    return response.status(502).json({ error: "El servicio de VIN no estÃ¡ disponible en este momento." });
   }
 });
 
@@ -226,7 +246,7 @@ app.get("/api/vehicles", requireAuth, async (request, response) => {
 
 app.post("/api/vehicles", requireAuth, async (request, response) => {
   const parsed = vehicleInput.safeParse(request.body);
-  if (!parsed.success) return response.status(400).json({ error: "Los datos del vehículo están incompletos." });
+  if (!parsed.success) return response.status(400).json({ error: "Los datos del vehÃ­culo estÃ¡n incompletos." });
   const vehicle = await createVehicle({
     id: crypto.randomUUID(),
     userId: request.user.id,
@@ -247,7 +267,7 @@ const diagnosisInput = z.object({
 
 app.post("/api/diagnose", async (request, response) => {
   const parsed = diagnosisInput.safeParse(request.body);
-  if (!parsed.success) return response.status(400).json({ error: "Faltan datos para crear la evaluación." });
+  if (!parsed.success) return response.status(400).json({ error: "Faltan datos para crear la evaluaciÃ³n." });
   try {
     const result = await diagnoseVehicle(parsed.data);
     await saveDiagnosis({
@@ -262,7 +282,7 @@ app.post("/api/diagnose", async (request, response) => {
     return response.json(result);
   } catch (error) {
     console.error("Diagnosis failed:", error);
-    return response.status(502).json({ error: "No pudimos generar la evaluación en este momento." });
+    return response.status(502).json({ error: "No pudimos generar la evaluaciÃ³n en este momento." });
   }
 });
 
@@ -270,7 +290,7 @@ app.get("/api/shops/search", async (request, response) => {
   const zip = String(request.query.zip || "").trim();
   const radius = Number(request.query.radius || 25);
   if (!/^\d{5}(-\d{4})?$/.test(zip)) {
-    return response.status(400).json({ error: "Ingresa un código postal válido." });
+    return response.status(400).json({ error: "Ingresa un cÃ³digo postal vÃ¡lido." });
   }
   response.json(await searchRepairShops(zip, radius));
 });
@@ -350,7 +370,7 @@ app.get("/api/quote-requests", requireAuth, async (request, response) => {
 
 app.post("/api/quote-requests", async (request, response) => {
   const parsed = quoteInput.safeParse(request.body);
-  if (!parsed.success) return response.status(400).json({ error: "La solicitud de cotización está incompleta." });
+  if (!parsed.success) return response.status(400).json({ error: "La solicitud de cotizaciÃ³n estÃ¡ incompleta." });
   const customer = request.user?.name || parsed.data.customer;
   const quoteRequest = {
     id: crypto.randomUUID(),
@@ -366,7 +386,7 @@ app.post("/api/quote-requests", async (request, response) => {
 });
 
 const quoteStatusInput = z.object({
-  status: z.enum(["Solicitud nueva", "Requiere revisión", "En revisión", "Cotizada", "Declinada", "Cita solicitada"]),
+  status: z.enum(["Solicitud nueva", "Requiere revisiÃ³n", "En revisiÃ³n", "Cotizada", "Declinada", "Cita solicitada"]),
 });
 
 app.patch("/api/quote-requests/:id/status", requireAuth, async (request, response) => {
@@ -376,7 +396,7 @@ app.patch("/api/quote-requests/:id/status", requireAuth, async (request, respons
 
   const parsed = quoteStatusInput.safeParse(request.body);
   if (!parsed.success) {
-    return response.status(400).json({ error: "Selecciona un estado válido." });
+    return response.status(400).json({ error: "Selecciona un estado vÃ¡lido." });
   }
 
   const updated = await updateQuoteRequestStatus({
@@ -392,14 +412,14 @@ app.patch("/api/quote-requests/:id/status", requireAuth, async (request, respons
   response.json({ quoteRequest: updated });
 });
 
-// ── Itemized quotes: list (shop) ───────────────────────────────────────────
+// â”€â”€ Itemized quotes: list (shop) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 app.get("/api/quotes/sent", requireAuth, async (request, response) => {
   const quotes = await listSentQuotes(request.user.id).catch(() => []);
   response.json({ quotes });
 });
 
-// ── Itemized quotes: build ─────────────────────────────────────────────────
+// â”€â”€ Itemized quotes: build â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const quoteBuildInput = z.object({
   diagnosis: z.record(z.string(), z.any()),
@@ -409,7 +429,7 @@ const quoteBuildInput = z.object({
 
 app.post("/api/quotes/build", async (request, response) => {
   const parsed = quoteBuildInput.safeParse(request.body);
-  if (!parsed.success) return response.status(400).json({ error: "Faltan datos de diagnóstico." });
+  if (!parsed.success) return response.status(400).json({ error: "Faltan datos de diagnÃ³stico." });
   try {
     const result = await buildQuoteFromDiagnosis({
       diagnosis: parsed.data.diagnosis,
@@ -419,11 +439,11 @@ app.post("/api/quotes/build", async (request, response) => {
     return response.json(result);
   } catch (e) {
     console.error("Quote build error:", e);
-    return response.status(502).json({ error: "No se pudo generar la cotización." });
+    return response.status(502).json({ error: "No se pudo generar la cotizaciÃ³n." });
   }
 });
 
-// ── Itemized quotes: send ──────────────────────────────────────────────────
+// â”€â”€ Itemized quotes: send â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const quoteSendInput = z.object({
   diagnosis: z.record(z.string(), z.any()),
@@ -442,10 +462,10 @@ const quoteSendInput = z.object({
 app.post("/api/quotes/send", requireAuth, async (request, response) => {
   const parsed = quoteSendInput.safeParse(request.body);
   if (!parsed.success) {
-    return response.status(400).json({ error: "Faltan datos para enviar la cotización." });
+    return response.status(400).json({ error: "Faltan datos para enviar la cotizaciÃ³n." });
   }
   if (!parsed.data.customer.email && !parsed.data.customer.phone) {
-    return response.status(400).json({ error: "Proporciona un correo o teléfono del cliente." });
+    return response.status(400).json({ error: "Proporciona un correo o telÃ©fono del cliente." });
   }
   const { diagnosis, vehicle, quoteCombo, quoteSingle, customer, quoteRequestId, language } = parsed.data;
 
@@ -495,308 +515,7 @@ app.post("/api/quotes/send", requireAuth, async (request, response) => {
   });
 });
 
-// ── Itemized quotes: track (customer facing) ───────────────────────────────
-
-app.get("/api/track/:token", async (request, response) => {
-  const token = request.params.token?.trim();
-  if (!token || token.length < 10) return response.status(400).json({ error: "Token inválido." });
-  const quote = await getItemizedQuoteByToken(token).catch(() => null);
-  if (!quote) return response.status(404).json({ error: "No encontramos esa cotización." });
-  response.json({ quote });
-});
-
-app.post("/api/track/:token/approve", async (request, response) => {
-  const token = request.params.token?.trim();
-  if (!token) return response.status(400).json({ error: "Token inválido." });
-  const updated = await approveQuoteByToken(token).catch(() => null);
-  if (!updated) return response.status(404).json({ error: "No encontramos esa cotización." });
-
-  // Notify the shop mechanic via SMS + email that the customer approved
-  if (updated.userId) {
-    try {
-      const shopProfile = await getShopProfile(updated.userId);
-      if (shopProfile) {
-        const veh = updated.vehicle || {};
-        const vehicleStr = [veh.year, veh.make, veh.model].filter(Boolean).join(" ") || "Vehicle";
-        await sendShopApprovalNotification({
-          shopPhone: shopProfile.phone,
-          shopEmail: shopProfile.email,
-          customerName: updated.customerName,
-          vehicle: vehicleStr,
-          appUrl: process.env.APP_URL || "https://repairscout.app",
-        });
-      }
-    } catch (e) {
-      console.error("[approve] notify shop error:", e.message);
-    }
-  }
-
-  response.json({ quote: updated });
-});
-
-// ── Get single quote by ID (shop only) ───────────────────────────────────
-
-app.get("/api/quotes/:id", requireAuth, async (request, response) => {
-  if (!["shop", "admin"].includes(request.user.role)) {
-    return response.status(403).json({ error: "Acceso no autorizado." });
-  }
-  const quote = await getItemizedQuoteById(request.params.id).catch(() => null);
-  if (!quote) return response.status(404).json({ error: "Cotización no encontrada." });
-  if (request.user.role === "shop" && quote.userId !== request.user.id) {
-    return response.status(403).json({ error: "Acceso no autorizado." });
-  }
-  response.json({ quote });
-});
-
-// ── Set tracking number (shop only) ──────────────────────────────────────
-
-app.patch("/api/quotes/:id/tracking", requireAuth, async (request, response) => {
-  if (request.user.role !== "shop") {
-    return response.status(403).json({ error: "Solo el taller puede actualizar el seguimiento." });
-  }
-  const ownerCheck = await getItemizedQuoteById(request.params.id).catch(() => null);
-  if (!ownerCheck) return response.status(404).json({ error: "Cotización no encontrada." });
-  if (ownerCheck.userId !== request.user.id) return response.status(403).json({ error: "Acceso no autorizado." });
-  const { trackingNumber, carrier } = request.body || {};
-  if (!trackingNumber?.trim()) return response.status(400).json({ error: "Ingresa un número de rastreo." });
-  const updated = await setTrackingInfo(request.params.id, trackingNumber.trim(), (carrier || "").trim());
-  if (!updated) return response.status(404).json({ error: "Cotización no encontrada." });
-  response.json({ quote: updated });
-});
-
-// ── Send invoice (shop only) ──────────────────────────────────────────────
-
-app.post("/api/quotes/:id/invoice", requireAuth, async (request, response) => {
-  if (request.user.role !== "shop") {
-    return response.status(403).json({ error: "Solo el taller puede enviar facturas." });
-  }
-  const ownerCheckInv = await getItemizedQuoteById(request.params.id).catch(() => null);
-  if (!ownerCheckInv) return response.status(404).json({ error: "Cotización no encontrada." });
-  if (ownerCheckInv.userId !== request.user.id) return response.status(403).json({ error: "Acceso no autorizado." });
-  const { paymentType, depositPct, invoiceTotal } = request.body || {};
-  const paymentAmount = paymentType === "deposit"
-    ? (invoiceTotal * (depositPct || 50) / 100)
-    : invoiceTotal;
-
-  const updated = await setInvoiceSent(request.params.id, "invoiced", paymentAmount || null);
-  if (!updated) return response.status(404).json({ error: "Cotización no encontrada." });
-
-  // Notify customer via SMS/email about the invoice
-  const veh = updated.vehicle || {};
-  const vehicleStr = [veh.year, veh.make, veh.model].filter(Boolean).join(" ") || "Vehicle";
-  if (updated.customerEmail || updated.customerPhone) {
-    try {
-      await sendInvoiceNotification({
-        customerEmail: updated.customerEmail,
-        customerPhone: updated.customerPhone,
-        customerName: updated.customerName,
-        vehicle: vehicleStr,
-        invoiceTotal: paymentAmount || invoiceTotal || 0,
-        trackUrl: `${process.env.APP_URL || "https://repairscout.app"}/track/${updated.token}`,
-      });
-    } catch (e) {
-      console.error("[invoice] notify customer error:", e.message);
-    }
-  }
-
-  response.json({ quote: updated });
-});
-
-// ── Repair stage update (shop only) ───────────────────────────────────────
-
-const repairStageInput = z.object({
-  stage: z.enum([
-    "Quote Sent", "Approved", "Parts Ordered", "Parts In Transit",
-    "Parts Arrived", "In Progress", "Quality Check",
-    "Ready for Pickup", "Completed", "Invoice Sent", "Paid",
-  ]),
-});
-
-app.patch("/api/quotes/:id/repair-stage", requireAuth, async (request, response) => {
-  if (request.user.role !== "shop") {
-    return response.status(403).json({ error: "Solo el taller puede actualizar el estado de la reparación." });
-  }
-  const ownerCheckStage = await getItemizedQuoteById(request.params.id).catch(() => null);
-  if (!ownerCheckStage) return response.status(404).json({ error: "Cotización no encontrada." });
-  if (ownerCheckStage.userId !== request.user.id) return response.status(403).json({ error: "Acceso no autorizado." });
-  const parsed = repairStageInput.safeParse(request.body);
-  if (!parsed.success) return response.status(400).json({ error: "Estado de reparación no válido." });
-  const updated = await updateRepairStage({ id: request.params.id, stage: parsed.data.stage });
-  if (!updated) return response.status(404).json({ error: "No encontramos esa cotización." });
-
-  // Notify customer of stage change (fire-and-forget)
-  if (updated.customerEmail || updated.customerPhone) {
-    const veh = updated.vehicle || {};
-    const vehicleStr = [veh.year, veh.make, veh.model].filter(Boolean).join(" ") || "Vehicle";
-    sendStageUpdateNotification({
-      customerEmail: updated.customerEmail,
-      customerPhone: updated.customerPhone,
-      customerName: updated.customerName,
-      vehicle: vehicleStr,
-      stage: parsed.data.stage,
-      trackUrl: `${process.env.APP_URL || "https://repairscout.app"}/track/${updated.token}`,
-    }).catch((e) => console.error("[stage-notify]", e.message));
-  }
-
-  response.json({ quote: updated });
-});
-
-// ── Cron: check tracking status 3x/day ───────────────────────────────────
-// Called by Vercel Cron at 8am, 12pm, 4pm UTC. Updates "Parts In Transit"
-// orders to "Parts Arrived" when the tracking carrier confirms delivery.
-
-app.get("/api/cron/check-tracking", async (request, response) => {
-  const authHeader = request.headers["authorization"] || "";
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
-    return response.status(401).json({ error: "Unauthorized." });
-  }
-  // Fetch all In Transit work orders
-  const allQuotes = await listSentQuotes(null).catch(() => []);
-  const inTransit = allQuotes.filter((q) => q.repairStage === "Parts In Transit" && q.trackingNumber);
-  const results = [];
-  for (const q of inTransit) {
-    // Placeholder: in a real implementation, query a tracking API here
-    // e.g. 17track, AfterShip, or the carrier API
-    console.log(`[cron/tracking] Checking ${q.trackingCarrier} ${q.trackingNumber} for order ${q.id}`);
-    results.push({ id: q.id, tracking: q.trackingNumber, status: "checked" });
-  }
-  response.json({ checked: results.length, results });
-});
-
-// ── OTP: send code ────────────────────────────────────────────────────────────
-
-app.use("/api/otp", limiter(15 * 60 * 1000, 10));
-
-app.post("/api/otp/send", async (request, response) => {
-  const raw = String(request.body?.phone || "").trim();
-  if (!raw) return response.status(400).json({ error: "Ingresa un número de teléfono." });
-
-  const phone = normalizePhone(raw);
-  if (phone.length < 10) return response.status(400).json({ error: "Número de teléfono inválido." });
-
-  const code = generateOtp();
-  const expiresAt = new Date(Date.now() + OTP_TTL_MS).toISOString();
-
-  await upsertPhoneVerification({ phone, code, expiresAt });
-
-  try {
-    await sendOtpSms(phone, code);
-  } catch (e) {
-    console.error("[otp/send] error:", e.message);
-    return response.status(502).json({ error: "No pudimos enviar el código. Verifica el número e inténtalo de nuevo." });
-  }
-
-  return response.json({ sent: true, phone });
-});
-
-// ── OTP: verify code ──────────────────────────────────────────────────────────
-
-app.post("/api/otp/verify", async (request, response) => {
-  const raw   = String(request.body?.phone || "").trim();
-  const code  = String(request.body?.code  || "").trim();
-  if (!raw || !code) return response.status(400).json({ error: "Faltan datos." });
-
-  const phone = normalizePhone(raw);
-  const record = await getPhoneVerification(phone);
-
-  if (!record) return response.status(404).json({ error: "Envía el código primero." });
-  if (new Date(record.codeExpiresAt) < new Date()) return response.status(410).json({ error: "El código expiró. Solicita uno nuevo." });
-  if (record.code !== code) return response.status(422).json({ error: "Código incorrecto." });
-
-  await markPhoneVerified(phone);
-
-  return response.json({
-    verified: true,
-    phone,
-    freeEligible: !record.usedFree,
-  });
-});
-
-// ── Checkout: start Stripe session ───────────────────────────────────────────
-
-app.use("/api/checkout", limiter(15 * 60 * 1000, 20));
-
-const checkoutStartInput = z.object({
-  phone: z.string().min(7).max(20),
-  vehicle: z.record(z.string(), z.any()).optional(),
-  mileage: z.string().max(30).optional(),
-  description: z.string().min(8).max(2000),
-  zip: z.string().min(5).max(10),
-  language: z.string().max(5).optional(),
-});
-
-app.post("/api/checkout/start", async (request, response) => {
-  const parsed = checkoutStartInput.safeParse(request.body);
-  if (!parsed.success) return response.status(400).json({ error: "Faltan datos para iniciar el pago." });
-
-  const { phone, vehicle, mileage, description, zip, language } = parsed.data;
-  const normalizedPhone = normalizePhone(phone);
-
-  const verification = await getPhoneVerification(normalizedPhone);
-  if (!verification?.verified) {
-    return response.status(403).json({ error: "Verifica tu teléfono primero." });
-  }
-
-  const id = crypto.randomUUID();
-  await createPendingDiagnosis({ id, phone: normalizedPhone, vehicle: vehicle || {}, mileage, description, zip, language: language || "es" });
-
-  try {
-    const session = await createDiagnosisCheckout({ pendingId: id, phone: normalizedPhone });
-    return response.json({ url: session.url, pendingId: id });
-  } catch (e) {
-    console.error("[checkout/start] Stripe error:", e.message);
-    return response.status(502).json({ error: "No pudimos iniciar el pago. Intenta de nuevo." });
-  }
-});
-
-// ── Free diagnosis: run immediately after OTP (first-time only) ───────────────
-
-const freeDiagInput = z.object({
-  phone: z.string().min(7).max(20),
-  vehicle: z.record(z.string(), z.any()).optional(),
-  mileage: z.string().max(30).optional(),
-  description: z.string().min(8).max(2000),
-  zip: z.string().min(5).max(10),
-  language: z.string().max(5).optional(),
-});
-
-app.post("/api/diagnose/free", limiter(15 * 60 * 1000, 30), async (request, response) => {
-  const parsed = freeDiagInput.safeParse(request.body);
-  if (!parsed.success) return response.status(400).json({ error: "Faltan datos para el diagnóstico." });
-
-  const { phone, vehicle, mileage, description, zip, language } = parsed.data;
-  const normalizedPhone = normalizePhone(phone);
-
-  const verification = await getPhoneVerification(normalizedPhone);
-  if (!verification?.verified) return response.status(403).json({ error: "Verifica tu teléfono primero." });
-  if (verification.usedFree) return response.status(402).json({ error: "Ya usaste tu diagnóstico gratuito.", requiresPayment: true });
-
-  try {
-    await markPhoneUsedFree(normalizedPhone);
-    const result = await diagnoseVehicle({ vehicle: vehicle || {}, mileage, description, zip, language: language || "es" });
-    await saveDiagnosis({ id: crypto.randomUUID(), userId: request.user?.id || null, vehicle: vehicle || {}, description, zip, result, createdAt: new Date().toISOString() });
-    return response.json({ result, free: true });
-  } catch (e) {
-    console.error("[diagnose/free] error:", e.message);
-    return response.status(502).json({ error: "No pudimos generar el diagnóstico." });
-  }
-});
-
-// ── Stripe webhook ────────────────────────────────────────────────────────────
-
-app.post("/api/stripe/webhook", async (request, response) => {
-  const sig = request.headers["stripe-signature"];
-  let event;
-  try {
-    event = constructWebhookEvent(request.rawBody, sig);
-  } catch (e) {
-    console.error("[stripe/webhook] signature error:", e.message);
-    return response.status(400).json({ error: `Webhook error: ${e.message}` });
-  }
-
-  if (event.type === "checkout.session.completed") {
-    const session = event.data.object;
+// â”€â”€ Itemized quotes: track (cust…4306 tokens truncated…    const session = event.data.object;
     const { pendingId, phone } = session.metadata || {};
     if (pendingId) {
       await setPendingDiagnosisPaid(pendingId, session.id).catch(console.error);
@@ -822,19 +541,19 @@ app.post("/api/stripe/webhook", async (request, response) => {
   response.json({ received: true });
 });
 
-// ── Pending diagnosis result (poll after Stripe) ──────────────────────────────
+// â”€â”€ Pending diagnosis result (poll after Stripe) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 app.get("/api/diagnose/result/:id", async (request, response) => {
   const id = request.params.id?.trim();
-  if (!id) return response.status(400).json({ error: "ID inválido." });
+  if (!id) return response.status(400).json({ error: "ID invÃ¡lido." });
   const pending = await getPendingDiagnosis(id).catch(() => null);
-  if (!pending) return response.status(404).json({ error: "No encontramos ese diagnóstico." });
+  if (!pending) return response.status(404).json({ error: "No encontramos ese diagnÃ³stico." });
   if (!pending.paid) return response.status(402).json({ error: "Pago pendiente.", pending: true });
   if (!pending.result) return response.json({ ready: false, paid: true });
   return response.json({ ready: true, paid: true, result: pending.result, vehicle: pending.vehicle });
 });
 
-// ── Parts search (AI-generated local + online results) ────────────────────────
+// â”€â”€ Parts search (AI-generated local + online results) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function buildSearchUrl(store, partNumber, query) {
   const q = encodeURIComponent(query);
@@ -912,38 +631,38 @@ app.post("/api/parts/search", limiter(60 * 1000, 20), async (request, response) 
   const mpgNum = parseFloat(mpg) || 25;
 
   const systemPrompt = isEs
-    ? `Eres un experto en autopartes. Devuelve SOLO JSON válido con resultados realistas para tiendas locales y en línea.`
+    ? `Eres un experto en autopartes. Devuelve SOLO JSON vÃ¡lido con resultados realistas para tiendas locales y en lÃ­nea.`
     : `You are an auto parts expert. Return ONLY valid JSON with realistic results for both local stores and online retailers.`;
 
   const userPrompt = isEs
-    ? `Búsqueda: "${q}"
-Ubicación: ${location}
-Precio de gasolina: $${gasPriceNum.toFixed(2)}/galón · Rendimiento del vehículo: ${mpgNum} mpg
+    ? `BÃºsqueda: "${q}"
+UbicaciÃ³n: ${location}
+Precio de gasolina: $${gasPriceNum.toFixed(2)}/galÃ³n Â· Rendimiento del vehÃ­culo: ${mpgNum} mpg
 
 Devuelve un objeto JSON con TRES elementos:
 
 "local": array de resultados para AutoZone, O'Reilly Auto Parts, NAPA Auto Parts, Advance Auto Parts, AutoQuest cerca de ${location}. Cada entrada:
-- part, seller, price ("$XX.XX"), stock (número), phone, warranty, partNumber
-- distanceMiles: millas estimadas desde ${location} hasta esta tienda (número realista, 1-15)
-- driveMinutes: tiempo de manejo estimado en minutos de ida (número realista, 5-30)
+- part, seller, price ("$XX.XX"), stock (nÃºmero), phone, warranty, partNumber
+- distanceMiles: millas estimadas desde ${location} hasta esta tienda (nÃºmero realista, 1-15)
+- driveMinutes: tiempo de manejo estimado en minutos de ida (nÃºmero realista, 5-30)
 
 "online": array para eBay Motors, Amazon, RockAuto, CarParts.com, PartsGeek. Cada entrada:
 - part, seller, price ("$XX.XX"), partNumber, warranty
-- shipping: tiempo de envío
+- shipping: tiempo de envÃ­o
 - inStock: true o false
 
-"selfSource": objeto con análisis de conveniencia de compra propia:
-- cheapestStore: nombre de la tienda más barata con existencias
-- cheapestPrice: precio más bajo disponible localmente como número (sin $)
-- cheapestPartNumber: número de parte de la opción más barata
-- roundTripMiles: millas de ida y vuelta a la tienda más barata
+"selfSource": objeto con anÃ¡lisis de conveniencia de compra propia:
+- cheapestStore: nombre de la tienda mÃ¡s barata con existencias
+- cheapestPrice: precio mÃ¡s bajo disponible localmente como nÃºmero (sin $)
+- cheapestPartNumber: nÃºmero de parte de la opciÃ³n mÃ¡s barata
+- roundTripMiles: millas de ida y vuelta a la tienda mÃ¡s barata
 - roundTripMinutes: minutos de ida y vuelta
-- gasCost: costo de gasolina del viaje (roundTripMiles / ${mpgNum} * ${gasPriceNum.toFixed(2)}) como número con 2 decimales
-- worthIt: true si el cliente ahorraría dinero comprando las piezas él mismo (considerando gasolina y tiempo)
-- verdict: oración corta explicando la recomendación en español`
+- gasCost: costo de gasolina del viaje (roundTripMiles / ${mpgNum} * ${gasPriceNum.toFixed(2)}) como nÃºmero con 2 decimales
+- worthIt: true si el cliente ahorrarÃ­a dinero comprando las piezas Ã©l mismo (considerando gasolina y tiempo)
+- verdict: oraciÃ³n corta explicando la recomendaciÃ³n en espaÃ±ol`
     : `Search: "${q}"
 Location: ${location}
-Gas price: $${gasPriceNum.toFixed(2)}/gal · Vehicle MPG: ${mpgNum}
+Gas price: $${gasPriceNum.toFixed(2)}/gal Â· Vehicle MPG: ${mpgNum}
 
 Return a JSON object with THREE elements:
 
@@ -982,10 +701,10 @@ Return a JSON object with THREE elements:
     const results = (parsed.local || []).map((r) => ({
       part: r.part || q,
       seller: r.seller || "Unknown",
-      price: r.price || "—",
+      price: r.price || "â€”",
       stock: r.stock ?? null,
       phone: r.phone || null,
-      warranty: r.warranty || "—",
+      warranty: r.warranty || "â€”",
       partNumber: r.partNumber || null,
       distanceMiles: r.distanceMiles ?? null,
       driveMinutes: r.driveMinutes ?? null,
@@ -995,9 +714,9 @@ Return a JSON object with THREE elements:
     const online = (parsed.online || []).slice(0, 5).map((r) => ({
       part: r.part || q,
       seller: r.seller || "Unknown",
-      price: r.price || "—",
+      price: r.price || "â€”",
       partNumber: r.partNumber || null,
-      warranty: r.warranty || "—",
+      warranty: r.warranty || "â€”",
       shipping: r.shipping || "Varies",
       inStock: r.inStock !== false,
       url: buildSearchUrl(r.seller, r.partNumber, q),
@@ -1024,7 +743,7 @@ Return a JSON object with THREE elements:
   }
 });
 
-// ── Bland.ai parts verification ───────────────────────────────────────────────
+// â”€â”€ Bland.ai parts verification â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const verifySchema = z.object({
   lang: z.enum(["en", "es"]).optional().default("en"),
@@ -1062,7 +781,7 @@ app.post("/api/parts/verify", limiter(60 * 1000, 10), async (request, response) 
 
   await createPartsInquiries(records);
 
-  // Fire calls in background — don't await, respond immediately
+  // Fire calls in background â€” don't await, respond immediately
   (async () => {
     for (const rec of records) {
       try {
@@ -1104,7 +823,7 @@ app.post("/api/parts/verify", limiter(60 * 1000, 10), async (request, response) 
   response.json({ batchId, total: records.length });
 });
 
-// Bland.ai webhook — called when each call finishes
+// Bland.ai webhook â€” called when each call finishes
 app.post("/api/bland/webhook", async (request, response) => {
   const webhookSecret = process.env.BLAND_WEBHOOK_SECRET;
   const providedSecret = request.headers["x-bland-secret"] || request.query.secret;
@@ -1144,7 +863,7 @@ app.get("/api/parts/inquiry-batch/:batchId", async (request, response) => {
   response.json({ inquiries, done, total: inquiries.length, complete: done === inquiries.length });
 });
 
-// ── Admin routes ──────────────────────────────────────────────────────────────
+// â”€â”€ Admin routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function requireAdmin(request, response, next) {
   if (!request.user) return response.status(401).json({ error: "Unauthorized." });
@@ -1230,7 +949,7 @@ app.put("/api/admin/plans/:id", requireAuth, requireAdmin, async (req, res) => {
 
 if (process.env.VERCEL !== "1") {
   app.use(express.static(path.join(projectDir, "dist")));
-  // SPA fallback — also handles /track/:token and /diagnose/result routes
+  // SPA fallback â€” also handles /track/:token and /diagnose/result routes
   app.get("*", limiter(60 * 1000, 300), (request, response, next) => {
     if (request.path.startsWith("/api/")) return next();
     response.sendFile(path.join(projectDir, "dist", "index.html"));
@@ -1238,3 +957,4 @@ if (process.env.VERCEL !== "1") {
 }
 
 export default app;
+

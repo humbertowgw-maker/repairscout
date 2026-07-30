@@ -515,7 +515,7 @@ export async function listQuoteRequests(shopName) {
   );
 }
 
-// ── Itemized quotes ────────────────────────────────────────────────────────
+// â”€â”€ Itemized quotes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function mapIQRow(row) {
   if (!row) return null;
@@ -608,25 +608,7 @@ export async function listSentQuotes(userId) {
   if (pool) {
     await ensureDatabase();
     const values = [];
-    let where = "";
-    if (userId) { values.push(userId); where = "where user_id = $1"; }
-    const result = await pool.query(
-      `select * from itemized_quotes ${where} order by created_at desc limit 100`,
-      values,
-    );
-    return result.rows.map(mapIQRow);
-  }
-  const store = await readStore();
-  const all = store.itemizedQuotes || [];
-  return userId ? all.filter((q) => q.userId === userId) : all;
-}
-
-export async function approveQuoteByToken(token) {
-  const now = new Date().toISOString();
-  if (pool) {
-    await ensureDatabase();
-    const result = await pool.query(
-      "update itemized_quotes set customer_approved = true, approved_at = $2, repair_stage = 'Approved' where token = $1 returning *",
+    let where = ""…169 tokens truncated…stage = 'Approved' where token = $1 returning *",
       [token, now],
     );
     return mapIQRow(result.rows[0]);
@@ -671,7 +653,7 @@ export async function updateQuoteRequestStatus({ id, shopName, status }) {
   return updatedQuote;
 }
 
-// ── Phone OTP ────────────────────────────────────────────────────────────────
+// â”€â”€ Phone OTP â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function upsertPhoneVerification({ phone, code, expiresAt }) {
   if (pool) {
@@ -748,7 +730,7 @@ export async function markPhoneUsedFree(phone) {
   }));
 }
 
-// ── Pending diagnoses (Stripe flow) ──────────────────────────────────────────
+// â”€â”€ Pending diagnoses (Stripe flow) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function createPendingDiagnosis({ id, phone, vehicle, mileage, description, zip, language }) {
   if (pool) {
@@ -826,7 +808,7 @@ export async function setPendingDiagnosisResult(id, result) {
   }));
 }
 
-// ── Parts inquiries (Bland.ai call tracking) ──────────────────────────────────
+// â”€â”€ Parts inquiries (Bland.ai call tracking) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function mapInquiryRow(row) {
   if (!row) return null;
@@ -937,7 +919,7 @@ export async function getPartsInquiryById(inquiryId) {
   return store.partsInquiries?.[inquiryId] || null;
 }
 
-// ── Admin ─────────────────────────────────────────────────────────────────────
+// â”€â”€ Admin â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function workOrderMigrate() {
   if (!pool) return;
@@ -1139,3 +1121,40 @@ export async function getAdminStats() {
     shopProfiles: (store.shopProfiles || []).length,
   };
 }
+
+export async function getPortfolioMetrics() {
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query(`
+      select
+        count(*) filter (where created_at >= now() - interval '7 days')::int
+          as verified_quote_requests_weekly,
+        count(*)::int as quote_requests_total,
+        count(*) filter (
+          where status in ('Cotizada', 'Cita solicitada')
+          and created_at >= now() - interval '7 days'
+        )::int as progressed_quote_requests_weekly,
+        max(created_at) as latest_quote_request_at
+      from quote_requests
+    `);
+    return result.rows[0] || {};
+  }
+
+  const store = await readStore();
+  const quotes = store.quoteRequests || [];
+  const cutoff = Date.now() - (7 * 24 * 60 * 60 * 1000);
+  const weekly = quotes.filter((quote) => new Date(quote.createdAt).getTime() >= cutoff);
+  return {
+    verified_quote_requests_weekly: weekly.length,
+    quote_requests_total: quotes.length,
+    progressed_quote_requests_weekly: weekly.filter(
+      (quote) => ["Cotizada", "Cita solicitada"].includes(quote.status),
+    ).length,
+    latest_quote_request_at: quotes
+      .map((quote) => quote.createdAt)
+      .filter(Boolean)
+      .sort()
+      .at(-1) || null,
+  };
+}
+

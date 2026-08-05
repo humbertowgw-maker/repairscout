@@ -53,7 +53,7 @@ import { diagnoseVehicle, getDiagnosisProviderStatus } from "./diagnosis.js";
 import { buildQuoteFromDiagnosis } from "./parts.js";
 import { sendQuoteNotification, sendShopApprovalNotification, sendInvoiceNotification, sendStageUpdateNotification } from "./notify.js";
 import { searchRepairShops } from "./shops.js";
-import { generateOtp, normalizePhone, OTP_TTL_MS, sendOtpSms } from "./otp.js";
+import { generateOtp, normalizePhone, otpConfigured, OTP_TTL_MS, sendOtpSms } from "./otp.js";
 import { constructWebhookEvent, createDiagnosisCheckout } from "./stripe.js";
 import { blandConfigured, parseBlandWebhook, simulatedCallResult, startPartInquiryCall } from "./bland.js";
 
@@ -117,6 +117,7 @@ app.get("/api/health", rateLimit({ windowMs: 60 * 1000, limit: 60 }), (_request,
     aiProviders,
     database: databaseMode(),
     authConfigured: authConfigured(),
+    smsConfigured: otpConfigured(),
     timestamp: new Date().toISOString(),
   });
 });
@@ -684,7 +685,16 @@ app.post("/api/otp/send", async (request, response) => {
     await sendOtpSms(phone, code);
   } catch (e) {
     console.error("[otp/send] error:", e.message);
-    return response.status(502).json({ error: "No pudimos enviar el código. Verifica el número e inténtalo de nuevo." });
+    if (e.code === "SMS_NOT_CONFIGURED") {
+      return response.status(503).json({
+        error: "La verificación por texto no está disponible todavía. No se envió ningún mensaje. Intenta de nuevo más tarde o inicia sesión para guardar tu progreso.",
+        code: "SMS_NOT_CONFIGURED",
+      });
+    }
+    return response.status(502).json({
+      error: "El proveedor de mensajes no pudo entregar el código. Verifica el número e inténtalo de nuevo.",
+      code: "SMS_DELIVERY_FAILED",
+    });
   }
 
   return response.json({ sent: true, phone });

@@ -98,6 +98,24 @@ After validating the preview:
 vercel --prod
 ```
 
+## Engineering notes
+
+Notes on how this was actually built, aimed at anyone reading the commit history rather than the pitch.
+
+**Multi-provider AI diagnosis with one contract.** `server/diagnosis.js` tries providers in a configurable order (`groq,gemini,openrouter,ai-gateway,openai` by default) and coerces every response through the same Zod schema (`DiagnosisSchema`), so the frontend never has to know which provider actually answered. If no provider is configured, a rule-based fallback keeps the diagnosis flow working with zero AI keys — this isn't a stub, it's the documented dev-mode path (see `PRODUCTION_CHECKLIST.md`).
+
+**Voice AI doing real phone verification.** `server/bland.js` uses Bland.ai to place actual outbound calls to local parts stores through a scripted bilingual persona ("Beto"), asking for stock, quantity, price, and same-day pickup, then parses the structured result out of a webhook. `POST /api/parts/verify` kicks off a batch of calls in the background and the frontend polls a batch-status endpoint every few seconds. Without `BLAND_API_KEY`, calls are simulated with randomized delays so the full UI flow (pending → on the line → confirmed) still works in local dev.
+
+**Storage has an honest fallback, not a hidden one.** Postgres via `DATABASE_URL` is primary; without it, both local dev and a bare Vercel preview fall back to a JSON store (`server/data/repairscout.json` locally, ephemeral in a serverless preview). That distinction — and the fact that a database-less preview will lose data between function instances — is called out directly in `PRODUCTION_CHECKLIST.md` rather than glossed over.
+
+**A caught production bug, visible in the history.** On 2026-07-29, a change meant only to add a portfolio-metrics route (`d323967`) shipped with roughly 350 lines silently dropped from `server/app.js` and mangled UTF-8 in the Spanish-language error strings (`contraseña` → `contraseÃ±a`). It was caught and reverted within about five minutes (`3f17050`, `4952dbe`, `51e19b7`), and the metrics endpoint was then rebuilt as its own isolated serverless function (`api/portfolio-metrics.js`, `58eb944`) instead of touching the shared route file again.
+
+**A real false-positive bug, not a hypothetical one.** Until `cf7fa36` (2026-08-04), the OTP endpoint returned `sent: true` whenever Twilio wasn't configured — it logged the code to the console and told the client it had texted someone. Fixed to return a distinct `SMS_NOT_CONFIGURED` (503) instead of a false success, so the frontend can tell "we didn't send it" apart from "the carrier rejected it."
+
+**A CodeQL-driven hardening pass.** `11b4d5c`, `05e02c4`, and `c0931e7` add `SECURITY.md`, `.github/dependabot.yml`, a CI workflow (`security.yml`) that runs `npm audit --audit-level=high`, a full build, and `node --check` on every server/API file, and explicit `express-rate-limit` windows on auth and OTP routes in response to actual CodeQL findings, not preemptively.
+
+**What's not here yet:** there is no automated test suite — CI enforces build success, a dependency audit, and syntax checks, not behavior. The app is deployed at `https://repairscout-smoky.vercel.app` on Vercel with Neon Postgres connected, but per `PRODUCTION_CHECKLIST.md` the AI Gateway path currently returns `customer_verification_required` until a payment card is attached to the Vercel team, so production traffic is served by the rule-based fallback diagnosis engine until that's resolved.
+
 ## Product rule
 
 RepairScout must distinguish among:

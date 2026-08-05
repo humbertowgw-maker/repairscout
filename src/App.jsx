@@ -1995,8 +1995,8 @@ function SendQuoteModal({ quoteData, selectedOption, vehicle, onClose, onSent, l
 
   const send = async () => {
     if (!form.name.trim()) { setError(isEn ? "Enter customer name." : "Ingresa el nombre del cliente."); return; }
-    if (!form.email.trim() && !form.phone.trim()) {
-      setError(isEn ? "Enter an email or phone number." : "Ingresa un correo o número de teléfono."); return;
+    if (!form.email.trim()) {
+      setError(isEn ? "Enter the customer email address." : "Ingresa el correo electrónico del cliente."); return;
     }
     setError("");
     setLoading(true);
@@ -2076,8 +2076,8 @@ function SendQuoteModal({ quoteData, selectedOption, vehicle, onClose, onSent, l
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {[
                 [isEn ? "Customer name *" : "Nombre del cliente *", "name", "text", isEn ? "Full name" : "Nombre completo"],
-                [isEn ? "Email address" : "Correo electrónico", "email", "email", "cliente@correo.com"],
-                [isEn ? "Mobile phone" : "Teléfono celular", "phone", "tel", "(555) 123-4567"],
+                [isEn ? "Email address * (default)" : "Correo electrónico * (predeterminado)", "email", "email", "cliente@correo.com"],
+                [isEn ? "Mobile phone (optional SMS)" : "Teléfono celular (SMS opcional)", "phone", "tel", "(555) 123-4567"],
               ].map(([label, key, type, ph]) => (
                 <label key={key} style={{ fontSize: 10, color: "#64748b" }}>
                   {label}
@@ -2094,8 +2094,8 @@ function SendQuoteModal({ quoteData, selectedOption, vehicle, onClose, onSent, l
               ))}
             </div>
             <div style={{ fontSize: 11, color: "#475569", marginTop: 8, display: "flex", gap: 12 }}>
-              {form.email && <span><Mail size={12} style={{ verticalAlign: "middle" }} /> {isEn ? "Will send email" : "Enviará correo"}</span>}
-              {form.phone && <span><Phone size={12} style={{ verticalAlign: "middle" }} /> {isEn ? "Will send SMS" : "Enviará SMS"}</span>}
+              <span><Mail size={12} style={{ verticalAlign: "middle" }} /> {isEn ? "Email is the default delivery method" : "El correo es el método de envío predeterminado"}</span>
+              {form.phone && <span><Phone size={12} style={{ verticalAlign: "middle" }} /> {isEn ? "SMS will also be attempted" : "También se intentará enviar SMS"}</span>}
             </div>
             {error && <p className="form-error" style={{ marginTop: 8 }}>{error}</p>}
             <button

@@ -25,6 +25,9 @@ vi.mock("openai", () => ({
 vi.mock("ai", () => ({
   generateText: generateTextMock,
   Output: { object: vi.fn((config) => config) },
+  // Pure passthrough is enough here: Output.object is already mocked to just forward its
+  // config, so the schema is never actually consumed/validated in this test.
+  jsonSchema: vi.fn((schema) => schema),
 }));
 
 const { diagnoseVehicle, getDiagnosisProviderStatus } = await import("../server/diagnosis.js");

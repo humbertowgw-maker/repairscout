@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
-import { generateText, Output } from "ai";
+import { generateText, Output, jsonSchema } from "ai";
 import { z } from "zod";
 
 const ScenarioSchema = z.object({
@@ -317,12 +317,21 @@ async function diagnoseWithGemini(systemPrompt, userPrompt, language) {
   return extractJson(payload?.candidates?.[0]?.content?.parts?.[0]?.text, language);
 }
 
+// AI SDK's own Zod->JSON-Schema conversion (used when passing a raw Zod schema straight
+// to Output.object) does not reliably include nullable+optional fields (bestCase/
+// worstCase) in the resulting `required` array — OpenAI models routed through the Gateway
+// with strict structured-output mode then reject the schema outright ("Missing 'bestCase'"),
+// even though the exact same schema works fine via zodTextFormat on the direct OpenAI path
+// below. Reusing zodTextFormat's proven-correct conversion here, instead of debugging the
+// SDK's internal converter, sidesteps the bug without a second schema to keep in sync.
+const gatewayDiagnosisSchema = jsonSchema(zodTextFormat(DiagnosisSchema, "vehicle_diagnosis").schema);
+
 async function diagnoseWithGateway(systemPrompt, userPrompt) {
   const { output } = await generateText({
     model: process.env.AI_GATEWAY_MODEL || "openai/gpt-5.4",
     system: systemPrompt,
     prompt: userPrompt,
-    output: Output.object({ schema: DiagnosisSchema }),
+    output: Output.object({ schema: gatewayDiagnosisSchema }),
     providerOptions: {
       gateway: {
         tags: ["app:repairscout", "feature:diagnosis"],

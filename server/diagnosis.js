@@ -36,8 +36,12 @@ const DiagnosisSchema = z.object({
     confidence: z.enum(["Baja", "Media", "Alta"]),
     repairLabel: z.string(),
   }),
-  bestCase: ScenarioSchema.optional(),
-  worstCase: ScenarioSchema.optional(),
+  // .nullable() is required alongside .optional() here: OpenAI's structured
+  // outputs (zodTextFormat, used by diagnoseWithOpenAI) reject any optional
+  // field that isn't also nullable — without it, the OpenAI provider throws
+  // before it ever makes a request, for every single diagnosis.
+  bestCase: ScenarioSchema.nullable().optional(),
+  worstCase: ScenarioSchema.nullable().optional(),
   questions: z.array(z.string()).max(4),
 });
 

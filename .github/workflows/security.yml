@@ -19,6 +19,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm test
       - run: npm audit --audit-level=high
       - run: npm run build
       - run: find server api -name '*.js' -type f -print0 | xargs -0 -n1 node --check

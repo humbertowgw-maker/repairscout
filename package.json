@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@ai-sdk/gateway": "^3.0.133",
-    "@vitejs/plugin-react": "^4.7.0",
+    "@vitejs/plugin-react": "^6.0.5",
     "ai": "^6.0.208",
     "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",

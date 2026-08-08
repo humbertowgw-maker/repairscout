@@ -55,12 +55,14 @@ import {
   listOutcomesForReview,
   adminReviewOutcome,
   getGuideStats,
+  listOutcomesNeedingReminder,
+  markOutcomeReminderSent,
 } from "./database.js";
 import { diagnoseVehicle, getDiagnosisProviderStatus } from "./diagnosis.js";
 import { REPAIR_GUIDES } from "./repair-guides.js";
 import { lookupCodes } from "./obd-codes.js";
 import { buildQuoteFromDiagnosis } from "./parts.js";
-import { sendQuoteNotification, sendShopApprovalNotification, sendInvoiceNotification, sendStageUpdateNotification } from "./notify.js";
+import { sendQuoteNotification, sendShopApprovalNotification, sendInvoiceNotification, sendStageUpdateNotification, sendOutcomeReminderNotification } from "./notify.js";
 import { searchRepairShops } from "./shops.js";
 import { generateOtp, normalizePhone, otpConfigured, OTP_TTL_MS, sendOtpSms } from "./otp.js";
 import { constructWebhookEvent, createDiagnosisCheckout } from "./stripe.js";
@@ -756,6 +758,44 @@ app.get("/api/cron/check-tracking", async (request, response) => {
     results.push({ id: q.id, tracking: q.trackingNumber, status: "checked" });
   }
   response.json({ checked: results.length, results });
+});
+
+// ── Cron: nudge unanswered confirmed-fix surveys once/day ─────────────────
+// Nobody is forced to open the "did this fix it?" link sent on completion — this
+// sends exactly one reminder per outcome, 48h after the original survey, to the
+// customers who never responded. Real crowd-sourced fix data is the entire point of
+// the confirmed-outcomes feature, so leaving this reminder unsent was leaving data on
+// the table.
+
+app.get("/api/cron/nudge-outcome-surveys", async (request, response) => {
+  const authHeader = request.headers["authorization"] || "";
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+    return response.status(401).json({ error: "Unauthorized." });
+  }
+  const pending = await listOutcomesNeedingReminder({ olderThanHours: 48 }).catch(() => []);
+  const results = [];
+  for (const outcome of pending) {
+    const quote = await getItemizedQuoteById(outcome.itemizedQuoteId).catch(() => null);
+    if (!quote || (!quote.customerEmail && !quote.customerPhone)) {
+      await markOutcomeReminderSent(outcome.id).catch(() => {});
+      results.push({ id: outcome.id, sent: false, reason: "no contact info" });
+      continue;
+    }
+    const veh = outcome.vehicle || {};
+    const vehicleStr = [veh.year, veh.make, veh.model].filter(Boolean).join(" ") || "Vehicle";
+    const surveyUrl = `${process.env.APP_URL || "https://repairscout.app"}/outcome/${outcome.surveyToken}`;
+    await sendOutcomeReminderNotification({
+      customerEmail: quote.customerEmail,
+      customerPhone: quote.customerPhone,
+      customerName: quote.customerName,
+      vehicle: vehicleStr,
+      surveyUrl,
+    }).catch((e) => console.error("[cron/outcome-reminder]", e.message));
+    await markOutcomeReminderSent(outcome.id).catch(() => {});
+    results.push({ id: outcome.id, sent: true });
+  }
+  response.json({ nudged: results.length, results });
 });
 
 // ── OTP: send code ────────────────────────────────────────────────────────────

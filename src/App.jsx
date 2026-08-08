@@ -2365,11 +2365,11 @@ function TrackPage({ token }) {
               <div style={{ fontSize: 11, color: "#f97316", fontWeight: 600, letterSpacing: ".08em", marginBottom: 4 }}>
                 {isEn ? "YOUR VEHICLE" : "TU VEHÍCULO"}
               </div>
-              <h1 style={{ fontSize: 22, fontWeight: 700, color: "#f1f5f9", margin: 0 }}>
+              <h1 style={{ fontSize: 22, fontWeight: 700, color: "#17211d", margin: 0 }}>
                 {[veh.year, veh.make, veh.model].filter(Boolean).join(" ") || (isEn ? "Your Vehicle" : "Tu vehículo")}
               </h1>
-              <p style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>
-                {isEn ? "Repair quote for" : "Cotización de reparación para"} <strong style={{ color: "#94a3b8" }}>{quote.customerName}</strong>
+              <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>
+                {isEn ? "Repair quote for" : "Cotización de reparación para"} <strong style={{ color: "#334155" }}>{quote.customerName}</strong>
               </p>
             </div>
 

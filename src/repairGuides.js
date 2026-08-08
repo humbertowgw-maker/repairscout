@@ -675,6 +675,13 @@ export const REPAIR_GUIDES = {
 
 export function matchGuideForCause(cause) {
   if (!cause) return null;
+  // Prefer the AI's own guideCategory pick (schema-constrained to a real guide id, see
+  // diagnosis.js's DiagnosisSchema) when present — it's far more reliable than regex
+  // over free-form title/reason text, which misses plenty of real phrasing. The regex
+  // stays as the fallback for the rule-based fallbackDiagnosis path (which sets its own
+  // known-correct guideCategory directly) and for older cached diagnoses that predate
+  // this field.
+  if (cause.guideCategory && REPAIR_GUIDES[cause.guideCategory]) return REPAIR_GUIDES[cause.guideCategory];
   const text = `${cause.title || ""} ${cause.reason || ""}`;
   return Object.values(REPAIR_GUIDES).find((g) => g.matchPattern.test(text)) || null;
 }

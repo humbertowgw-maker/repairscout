@@ -4,6 +4,9 @@ import { generateText, Output, jsonSchema } from "ai";
 import { z } from "zod";
 import { extractCodesFromText, lookupCodes } from "./obd-codes.js";
 import { findConfirmedOutcomes } from "./database.js";
+import { REPAIR_GUIDES } from "./repair-guides.js";
+
+const REPAIR_GUIDE_IDS = Object.keys(REPAIR_GUIDES);
 
 const ScenarioSchema = z.object({
   scenario: z.string(),
@@ -24,6 +27,12 @@ const DiagnosisSchema = z.object({
       test: z.string(),
       urgency: z.string(),
       tone: z.enum(["danger", "warn", "neutral"]),
+      // Lets the AI point straight at a known step-by-step repair guide instead of
+      // relying on matchGuideForCause's regex over free-form title/reason text, which
+      // misses plenty of real phrasing. .nullable() alongside .optional() for the same
+      // reason bestCase/worstCase need it above — OpenAI structured outputs reject an
+      // optional field that isn't also nullable.
+      guideCategory: z.enum(REPAIR_GUIDE_IDS).nullable().optional(),
     }),
   ).min(1).max(4),
   estimate: z.object({
@@ -229,6 +238,11 @@ function extractJson(text, language = "es") {
       test: String(cause?.test || (isEn ? "Inspect and test the related system." : "Realizar inspección y pruebas del sistema relacionado.")),
       urgency: String(cause?.urgency || (isEn ? "Verify" : "Verificar")),
       tone: tones.includes(cause?.tone) ? cause.tone : "neutral",
+      // Never trust the raw string as a valid id — text-JSON providers (Groq, Gemini,
+      // OpenRouter) aren't schema-enforced like the OpenAI/Gateway paths, so a
+      // hallucinated or outdated id must fall back to null (and matchGuideForCause's
+      // regex) rather than crash a lookup downstream.
+      guideCategory: REPAIR_GUIDE_IDS.includes(cause?.guideCategory) ? cause.guideCategory : null,
     })),
     estimate: {
       low: number(estimate.low),
@@ -299,7 +313,7 @@ Return only valid JSON, no Markdown. Use exactly this structure:
   "summary": "string",
   "safetyLevel": "bajo|moderado|alto|crítico",
   "safetyMessage": "string",
-  "possibleCauses": [{"probability": 1, "title": "string", "reason": "string — explain WHY this is likely in 2-3 sentences with specific technical detail", "test": "string — specific diagnostic test or measurement to confirm/rule out", "urgency": "string", "tone": "danger|warn|neutral"}],
+  "possibleCauses": [{"probability": 1, "title": "string", "reason": "string — explain WHY this is likely in 2-3 sentences with specific technical detail", "test": "string — specific diagnostic test or measurement to confirm/rule out", "urgency": "string", "tone": "danger|warn|neutral", "guideCategory": "string or null — one of the fixed ids below if a step-by-step guide exists for this exact repair, else null"}],
   "estimate": {"low": 0, "high": 0, "partsLow": 0, "partsHigh": 0, "laborLow": 0, "laborHigh": 0, "laborHoursLow": 0, "laborHoursHigh": 0, "confidence": "Baja|Media|Alta", "repairLabel": "string"},
   "bestCase": {"scenario": "string — the mildest/cheapest likely repair", "estimatedCost": "$X–$Y", "outcome": "string — what gets resolved", "timeframe": "string — e.g. same day"},
   "worstCase": {"scenario": "string — the most extensive repair needed if all related components failed", "estimatedCost": "$X–$Y", "outcome": "string — what could happen if ignored", "timeframe": "string — e.g. 2-3 days"},
@@ -307,6 +321,7 @@ Return only valid JSON, no Markdown. Use exactly this structure:
 }
 IMPORTANT: safetyLevel must always be one of: bajo, moderado, alto, crítico (these are fixed codes, not translated).
 IMPORTANT: confidence must always be one of: Baja, Media, Alta (fixed codes, not translated).
+IMPORTANT: guideCategory must be exactly one of these fixed ids (never invent a new one) or null: ${REPAIR_GUIDE_IDS.join(", ")}.
 possibleCauses reason fields must be detailed and explain the technical connection between symptoms and the cause.
 questions must be targeted follow-up questions that would meaningfully narrow down the diagnosis.
 All other text fields must be written in the language specified in the system prompt.`;
@@ -472,6 +487,7 @@ function fallbackDiagnosis(description, language = "es") {
           test: en ? "Measure resting voltage and voltage during the start attempt." : "Medir el voltaje en reposo y durante el intento de arranque.",
           urgency: en ? "Check first" : "Revisar primero",
           tone: "warn",
+          guideCategory: "battery-and-terminals",
         },
         {
           probability: 38,
@@ -480,6 +496,7 @@ function fallbackDiagnosis(description, language = "es") {
           test: en ? "Inspect terminals, grounds, and voltage drop across cables." : "Inspeccionar terminales, tierras y caída de voltaje en los cables.",
           urgency: en ? "Verify" : "Verificar",
           tone: "neutral",
+          guideCategory: "battery-and-terminals",
         },
       ],
       estimate: {
@@ -511,6 +528,7 @@ function fallbackDiagnosis(description, language = "es") {
           test: en ? "Inspect pad thickness and rotor surface condition." : "Inspeccionar el grosor de las pastillas y la superficie de los rotores.",
           urgency: en ? "Don't delay" : "No lo pospongas",
           tone: "danger",
+          guideCategory: "front-brake-pads",
         },
         {
           probability: 54,
@@ -519,6 +537,7 @@ function fallbackDiagnosis(description, language = "es") {
           test: en ? "Measure rotor thickness and lateral runout." : "Medir el grosor y la desviación lateral de los rotores.",
           urgency: en ? "Inspect today" : "Inspeccionar hoy",
           tone: "warn",
+          guideCategory: "front-brake-pads",
         },
         {
           probability: 21,
@@ -527,6 +546,7 @@ function fallbackDiagnosis(description, language = "es") {
           test: en ? "Lift the vehicle and check for wheel play and bearing noise." : "Elevar el vehículo y revisar juego y ruido en la rueda.",
           urgency: en ? "Rule out" : "Descartar",
           tone: "neutral",
+          guideCategory: "wheel-bearing",
         },
       ],
       estimate: {

@@ -251,6 +251,7 @@ async function ensureDatabase() {
       reported_by text not null default 'customer' check (reported_by in ('customer', 'shop')),
       survey_token text unique,
       survey_sent_at timestamptz,
+      reminder_sent_at timestamptz,
       self_reported_at timestamptz,
       shop_confirmed boolean not null default false,
       shop_confirmed_at timestamptz,
@@ -982,6 +983,9 @@ export async function workOrderMigrate() {
       add column if not exists shop_notified_at timestamptz,
       add column if not exists payment_status text default 'unpaid',
       add column if not exists payment_amount numeric(10,2);
+
+    alter table repair_outcomes
+      add column if not exists reminder_sent_at timestamptz;
   `);
 }
 
@@ -1188,6 +1192,7 @@ function mapOutcomeRow(row) {
     reportedBy: row.reported_by,
     surveyToken: row.survey_token,
     surveySentAt: row.survey_sent_at,
+    reminderSentAt: row.reminder_sent_at,
     selfReportedAt: row.self_reported_at,
     shopConfirmed: row.shop_confirmed,
     shopConfirmedAt: row.shop_confirmed_at,
@@ -1217,7 +1222,7 @@ export async function createOutcomeSurvey(quote) {
   // itself — admin review can still override this via adminReviewOutcome, but most
   // outcomes never get manually reviewed, so an unset guide_category would mean most
   // confirmed fixes never feed back into the guide UI's "confirmed by N repairs" stat.
-  const guideCategory = matchGuideForCause({ title: firstCause.title, reason: fixDescription })?.id || null;
+  const guideCategory = matchGuideForCause({ title: firstCause.title, reason: fixDescription, guideCategory: firstCause.guideCategory })?.id || null;
 
   const record = {
     id,
@@ -1463,4 +1468,52 @@ export async function getGuideStats(guideId) {
     (o) => o.guideCategory === guideId && (o.trustTier === "shop_confirmed" || o.trustTier === "admin_reviewed") && o.worked === true,
   );
   return summarizeGuideOutcomes(rows);
+}
+
+/**
+ * Outcomes whose survey went out a while ago but nobody ever responded — the gap
+ * flagged in the original plan ("nothing forces a customer to open the survey link").
+ * Only ever nudges once (reminder_sent_at is set right after, by markOutcomeReminderSent)
+ * so this is safe to run daily without spamming anyone.
+ */
+export async function listOutcomesNeedingReminder({ olderThanHours = 48 } = {}) {
+  const cutoff = new Date(Date.now() - olderThanHours * 60 * 60 * 1000).toISOString();
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query(
+      `select * from repair_outcomes
+       where survey_sent_at is not null
+         and survey_sent_at < $1
+         and self_reported_at is null
+         and reminder_sent_at is null`,
+      [cutoff],
+    );
+    return result.rows.map(mapOutcomeRow);
+  }
+  const store = await readStore();
+  return (store.repairOutcomes || []).filter(
+    (o) => o.surveySentAt && o.surveySentAt < cutoff && !o.selfReportedAt && !o.reminderSentAt,
+  );
+}
+
+export async function markOutcomeReminderSent(id) {
+  const now = new Date().toISOString();
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query(
+      "update repair_outcomes set reminder_sent_at = $2 where id = $1 returning *",
+      [id, now],
+    );
+    return mapOutcomeRow(result.rows[0]);
+  }
+  let updated = null;
+  await updateStore((store) => ({
+    ...store,
+    repairOutcomes: (store.repairOutcomes || []).map((o) => {
+      if (o.id !== id) return o;
+      updated = { ...o, reminderSentAt: now };
+      return updated;
+    }),
+  }));
+  return updated;
 }

@@ -15,6 +15,10 @@
     {
       "path": "/api/cron/check-tracking",
       "schedule": "0 14 * * *"
+    },
+    {
+      "path": "/api/cron/nudge-outcome-surveys",
+      "schedule": "0 16 * * *"
     }
   ]
 }

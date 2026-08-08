@@ -3,6 +3,7 @@ import { zodTextFormat } from "openai/helpers/zod";
 import { generateText, Output, jsonSchema } from "ai";
 import { z } from "zod";
 import { extractCodesFromText, lookupCodes } from "./obd-codes.js";
+import { findConfirmedOutcomes } from "./database.js";
 
 const ScenarioSchema = z.object({
   scenario: z.string(),
@@ -133,6 +134,53 @@ export function groundedCodesSection(input, language) {
   }
 
   return lines.length ? `\n\n${lines.join("\n")}` : "";
+}
+
+// Same symptom categories fallbackDiagnosis() already hand-recognizes below (brake,
+// starting) — kept intentionally small rather than trying to cover every possible
+// symptom, since these keywords drive an ILIKE match against real repair_outcomes rows,
+// not free-form NLP.
+function extractSymptomKeywords(description) {
+  const normalized = String(description || "").toLowerCase();
+  const keywords = [];
+  if (/(fren|brake|rechin|grind|pastilla|pad)/.test(normalized)) keywords.push("brake", "freno", "brake pad", "pastilla");
+  if (/(no enciende|no arranca|won't start|bater)/.test(normalized)) keywords.push("start", "arranque", "battery", "bateria");
+  return keywords;
+}
+
+/**
+ * Grounds the AI prompt with real, admin/shop-confirmed repair outcomes from similar
+ * vehicles — the actual differentiator this exists for: RepairScout's own growing record
+ * of what really worked, not scraped content. Mirrors groundedCodesSection's shape
+ * exactly (look up verified facts, format a labeled block) but needs a DB round-trip, so
+ * every caller must await it and the call site already wraps it in .catch(() => "") —
+ * a database hiccup must never fail a diagnosis, it should just mean less grounding.
+ */
+export async function groundedOutcomesSection(input, language) {
+  const vehicle = input.vehicle || {};
+  if (!vehicle.make || !vehicle.model) return "";
+
+  const isEn = language === "en";
+  const keywords = extractSymptomKeywords(input.description);
+  const outcomes = await findConfirmedOutcomes({
+    make: vehicle.make,
+    model: vehicle.model,
+    symptomKeywords: keywords,
+    obdCodes: input.obdCodes || [],
+    limit: 3,
+  });
+  if (!outcomes.length) return "";
+
+  const lines = [
+    isEn
+      ? `Confirmed fixes from real RepairScout repairs on similar vehicles (verified by the repair shop or reviewed by RepairScout — use these as real evidence, not just a suggestion):`
+      : `Reparaciones confirmadas de casos reales de RepairScout en vehículos similares (verificadas por el taller o revisadas por RepairScout — úsalas como evidencia real, no solo como sugerencia):`,
+  ];
+  for (const o of outcomes) {
+    const veh = [o.vehicle?.year, o.vehicle?.make, o.vehicle?.model].filter(Boolean).join(" ");
+    lines.push(`- ${veh}: "${o.causeTitle}" → ${o.fixDescription || (isEn ? "fix not recorded" : "reparación no registrada")}${o.notes ? ` (${o.notes})` : ""}`);
+  }
+  return `\n\n${lines.join("\n")}`;
 }
 
 function orderedProviders(input) {
@@ -528,7 +576,7 @@ export async function diagnoseVehicle(input) {
   const language = input.language === "en" ? "en" : "es";
   const langLabel = language === "en" ? "English" : "Spanish";
 
-  const systemPrompt = language === "en"
+  const basePrompt = language === "en"
     ? `You are a senior ASE-certified automotive technician assistant for RepairScout. Respond in English.
 Your assessment is preliminary and must never be presented as a confirmed diagnosis.
 Prioritize safety above all. Clearly indicate when the vehicle should not be driven.
@@ -546,8 +594,11 @@ Las probabilidades son estimaciones orientativas y no deben sumar necesariamente
 Los costos deben ser rangos prudentes en dólares estadounidenses basados en reparación independiente general.
 Para cada posible causa, explica la razón técnica de POR QUÉ los síntomas descritos apuntan a esa causa — sé específico sobre la relación mecánica o eléctrica. Incluye cómo confirmar o descartar la causa.
 Siempre proporciona un escenario realista de mejor y peor caso para que el conductor conozca el rango de costos que enfrenta.
-Genera 3–4 preguntas de seguimiento específicas que, si se responden, reducirían significativamente el diagnóstico.`
-    + groundedCodesSection(input, language);
+Genera 3–4 preguntas de seguimiento específicas que, si se responden, reducirían significativamente el diagnóstico.`;
+
+  const systemPrompt = basePrompt
+    + groundedCodesSection(input, language)
+    + (await groundedOutcomesSection(input, language).catch(() => ""));
 
   const userPrompt = JSON.stringify({
     vehicle,

@@ -99,6 +99,11 @@ import {
   updateAdminPlan,
   setTrackingInfo,
   sendInvoice,
+  getOutcomeSurvey,
+  respondToOutcomeSurvey,
+  shopConfirmOutcome,
+  getAdminOutcomes,
+  adminReviewOutcome,
 } from "./api";
 import { T, confidenceDisplay, safetyLevelDisplay, statusDisplay, quoteStatusKeys } from "./i18n";
 
@@ -2462,6 +2467,149 @@ function PhoneOtpModal({ diagnosisInput, onFreeResult, onClose }) {
   );
 }
 
+/* ── Outcome Survey Page (public, token-gated — "did this fix it?") ── */
+
+function OutcomeSurveyPage({ token }) {
+  const { lang } = useLang();
+  const isEn = lang === "en";
+  const [outcome, setOutcome] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [worked, setWorked] = useState(null);
+  const [notes, setNotes] = useState("");
+  const [costActual, setCostActual] = useState("");
+  const [submitted, setSubmitted] = useState(false);
+
+  useEffect(() => {
+    getOutcomeSurvey(token)
+      .then(({ outcome: o }) => {
+        setOutcome(o);
+        if (o.worked != null) { setWorked(o.worked); setSubmitted(true); }
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [token]);
+
+  const submit = async () => {
+    if (worked === null) return;
+    setSubmitting(true);
+    try {
+      const payload = { worked, notes: notes.trim() || undefined };
+      const cost = Number(costActual);
+      if (costActual.trim() && Number.isFinite(cost) && cost >= 0) payload.costActual = cost;
+      const { outcome: o } = await respondToOutcomeSurvey(token, payload);
+      setOutcome(o);
+      setSubmitted(true);
+    } catch (e) { setError(e.message); }
+    finally { setSubmitting(false); }
+  };
+
+  const veh = outcome?.vehicle || {};
+  const vehicleLabel = [veh.year, veh.make, veh.model].filter(Boolean).join(" ") || (isEn ? "your vehicle" : "tu vehículo");
+
+  return (
+    <main className="legal-page" style={{ minHeight: "100vh" }}>
+      <section className="legal-card" style={{ maxWidth: 560 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 24 }}>
+          <span style={{
+            background: "#1e3a5f", borderRadius: 8, padding: "6px 10px",
+            color: "#f97316", display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 700,
+          }}>
+            <Wrench size={16} /> RepairScout
+          </span>
+        </div>
+
+        {loading && (
+          <div style={{ textAlign: "center", padding: "48px 0", color: "#475569" }}>
+            {isEn ? "Loading…" : "Cargando…"}
+          </div>
+        )}
+
+        {error && !loading && (
+          <div style={{ textAlign: "center", padding: "48px 0" }}>
+            <div style={{ fontSize: 36, marginBottom: 12 }}>🔍</div>
+            <div style={{ color: "#f87171", fontWeight: 600, marginBottom: 8 }}>
+              {isEn ? "Survey not found" : "Encuesta no encontrada"}
+            </div>
+            <p style={{ fontSize: 12, color: "var(--muted)" }}>{error}</p>
+          </div>
+        )}
+
+        {outcome && !submitted && (
+          <>
+            <h1 style={{ fontSize: 20, fontWeight: 700, color: "#17211d", margin: "0 0 6px" }}>
+              {isEn ? `Did this fix your ${vehicleLabel}?` : `¿Esto resolvió el problema de tu ${vehicleLabel}?`}
+            </h1>
+            {outcome.causeTitle && (
+              <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 20 }}>
+                {isEn ? "Repair: " : "Reparación: "}<strong style={{ color: "#334155" }}>{outcome.fixDescription || outcome.causeTitle}</strong>
+              </p>
+            )}
+
+            <div style={{ display: "flex", gap: 10, marginBottom: 18 }}>
+              <button
+                className={worked === true ? "primary" : ""}
+                onClick={() => setWorked(true)}
+                style={{ flex: 1 }}
+              >
+                {isEn ? "Yes, it worked" : "Sí, funcionó"}
+              </button>
+              <button
+                className={worked === false ? "primary" : ""}
+                onClick={() => setWorked(false)}
+                style={{ flex: 1 }}
+              >
+                {isEn ? "No, still broken" : "No, sigue fallando"}
+              </button>
+            </div>
+
+            <label htmlFor="outcome-notes" style={{ fontSize: 12, color: "#334155", display: "block", marginBottom: 6 }}>
+              {isEn ? "What actually worked? (optional)" : "¿Qué fue lo que funcionó? (opcional)"}
+            </label>
+            <textarea
+              id="outcome-notes"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              style={{ width: "100%", minHeight: 80, marginBottom: 14 }}
+            />
+
+            <label htmlFor="outcome-cost" style={{ fontSize: 12, color: "#334155", display: "block", marginBottom: 6 }}>
+              {isEn ? "Actual cost paid (optional)" : "Costo real pagado (opcional)"}
+            </label>
+            <input
+              id="outcome-cost"
+              className="plain-input"
+              type="number"
+              min="0"
+              value={costActual}
+              onChange={(e) => setCostActual(e.target.value)}
+              placeholder="$"
+              style={{ marginBottom: 20 }}
+            />
+
+            <button className="primary" onClick={submit} disabled={worked === null || submitting} style={{ width: "100%" }}>
+              {submitting ? "…" : (isEn ? "Submit" : "Enviar")}
+            </button>
+          </>
+        )}
+
+        {submitted && (
+          <div style={{
+            background: "rgba(74,222,128,.06)", border: "1px solid rgba(74,222,128,.3)",
+            borderRadius: 10, padding: "20px", textAlign: "center",
+          }}>
+            <Check size={20} style={{ color: "#4ade80", marginBottom: 6 }} />
+            <div style={{ color: "#4ade80", fontWeight: 700, fontSize: 14 }}>
+              {isEn ? "Thanks — this helps future diagnoses." : "Gracias — esto ayuda a futuros diagnósticos."}
+            </div>
+          </div>
+        )}
+      </section>
+    </main>
+  );
+}
+
 /* ── Diagnose Result Page (post-Stripe return) ── */
 
 function DiagnoseResultPage({ pendingId }) {
@@ -3319,22 +3467,34 @@ function AdminPanel() {
   const [users, setUsers] = useState([]);
   const [quotes, setQuotes] = useState([]);
   const [plans, setPlans] = useState([]);
+  const [outcomes, setOutcomes] = useState([]);
   const [activeTab, setActiveTab] = useState("overview");
   const [loading, setLoading] = useState(true);
   const [roleUpdating, setRoleUpdating] = useState("");
   const [planSaving, setPlanSaving] = useState("");
   const [planMessage, setPlanMessage] = useState("");
+  const [outcomeReviewing, setOutcomeReviewing] = useState("");
 
   useEffect(() => {
-    Promise.allSettled([getAdminStats(), getAdminUsers(), getAdminQuotes(), getAdminPlans()])
-      .then(([s, u, q, p]) => {
+    Promise.allSettled([getAdminStats(), getAdminUsers(), getAdminQuotes(), getAdminPlans(), getAdminOutcomes("shop_confirmed")])
+      .then(([s, u, q, p, o]) => {
         if (s.status === "fulfilled") setStats(s.value);
         if (u.status === "fulfilled") setUsers(u.value.users || []);
         if (q.status === "fulfilled") setQuotes(q.value.quotes || []);
         if (p.status === "fulfilled") setPlans(p.value.plans || []);
+        if (o.status === "fulfilled") setOutcomes(o.value.outcomes || []);
       })
       .finally(() => setLoading(false));
   }, []);
+
+  const reviewOutcome = async (id, approve) => {
+    setOutcomeReviewing(id);
+    try {
+      await adminReviewOutcome(id, { approve });
+      setOutcomes((prev) => prev.filter((o) => o.id !== id));
+    } catch (e) { console.error(e); }
+    finally { setOutcomeReviewing(""); }
+  };
 
   const changeRole = async (id, role) => {
     setRoleUpdating(id);
@@ -3390,7 +3550,7 @@ function AdminPanel() {
 
       {/* Tab switcher */}
       <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
-        {[["overview", isEn ? "Overview" : "Resumen"], ["plans", isEn ? "Plans" : "Planes"], ["users", isEn ? "Users" : "Usuarios"], ["quotes", isEn ? "All Quotes" : "Cotizaciones"]].map(([key, label]) => (
+        {[["overview", isEn ? "Overview" : "Resumen"], ["plans", isEn ? "Plans" : "Planes"], ["users", isEn ? "Users" : "Usuarios"], ["quotes", isEn ? "All Quotes" : "Cotizaciones"], ["outcomes", isEn ? `Outcomes (${outcomes.length})` : `Resultados (${outcomes.length})`]].map(([key, label]) => (
           <button key={key} onClick={() => setActiveTab(key)} style={{
             padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer",
             background: activeTab === key ? "#a855f7" : "#1e2d47", color: "#fff",
@@ -3559,6 +3719,58 @@ function AdminPanel() {
                 <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: q.status === "Cotizada" ? "#1d4ed822" : "#33415522", color: q.status === "Cotizada" ? "#3b82f6" : "#94a3b8" }}>
                   {q.status}
                 </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── Outcomes: SureTrack-style editorial gate — shop-confirmed reports awaiting final review before they ground future diagnoses ── */}
+      {activeTab === "outcomes" && (
+        <div>
+          <p style={{ fontSize: 11, color: "#64748b", marginBottom: 12 }}>
+            {isEn
+              ? "Shop-confirmed outcomes awaiting review. Approving lets this feed future AI diagnoses for similar vehicles/symptoms."
+              : "Resultados confirmados por talleres pendientes de revisión. Aprobar permite que esto informe futuros diagnósticos de IA para vehículos/síntomas similares."}
+          </p>
+          {outcomes.length === 0 && (
+            <p style={{ fontSize: 12, color: "#94a3b8" }}>{isEn ? "Nothing pending review." : "Nada pendiente de revisión."}</p>
+          )}
+          {outcomes.map((o) => (
+            <div key={o.id} style={{ ...STAT_DARK, marginBottom: 8 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 8 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, color: "#e2e8f0", fontSize: 13 }}>
+                    {[o.vehicle?.year, o.vehicle?.make, o.vehicle?.model].filter(Boolean).join(" ")}
+                  </div>
+                  <div style={{ fontSize: 11, color: "#94a3b8" }}>{o.causeTitle}{o.fixDescription ? ` → ${o.fixDescription}` : ""}</div>
+                  {o.obdCodes?.length > 0 && (
+                    <div style={{ fontSize: 10, color: "#64748b", marginTop: 2 }}>{o.obdCodes.join(", ")}</div>
+                  )}
+                </div>
+                <span style={{
+                  fontSize: 10, padding: "2px 6px", borderRadius: 4, flexShrink: 0,
+                  background: o.worked ? "#16a34a22" : "#dc262622", color: o.worked ? "#4ade80" : "#f87171",
+                }}>
+                  {o.worked ? (isEn ? "Worked" : "Funcionó") : (isEn ? "Didn't work" : "No funcionó")}
+                </span>
+              </div>
+              {o.notes && <p style={{ fontSize: 11, color: "#cbd5e1", marginBottom: 8 }}>"{o.notes}"</p>}
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  className="primary small"
+                  disabled={outcomeReviewing === o.id}
+                  onClick={() => reviewOutcome(o.id, true)}
+                >
+                  {isEn ? "Approve" : "Aprobar"}
+                </button>
+                <button
+                  disabled={outcomeReviewing === o.id}
+                  onClick={() => reviewOutcome(o.id, false)}
+                  style={{ background: "#334155", color: "#e2e8f0", border: "none", borderRadius: 9, padding: "10px 16px", fontWeight: 700, cursor: "pointer" }}
+                >
+                  {isEn ? "Reject" : "Rechazar"}
+                </button>
               </div>
             </div>
           ))}
@@ -4300,6 +4512,12 @@ function App() {
     return match ? match[1] : null;
   });
 
+  // Detect /outcome/:token URL (confirmed-fix survey link)
+  const [outcomeToken] = useState(() => {
+    const match = window.location.pathname.match(/^\/outcome\/([a-f0-9]{20,})$/i);
+    return match ? match[1] : null;
+  });
+
   // Detect /diagnose/result?pid=xxx URL (post-Stripe return)
   const [diagnosePendingId] = useState(() => {
     if (window.location.pathname !== "/diagnose/result") return null;
@@ -4319,7 +4537,7 @@ function App() {
 
   return (
     <LangCtx.Provider value={{ lang, setLang }}>
-      {(trackToken || diagnosePendingId) ? (
+      {(trackToken || outcomeToken || diagnosePendingId) ? (
         <>
           <header className="topbar" style={{ justifyContent: "space-between" }}>
             <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -4331,7 +4549,7 @@ function App() {
               style={{ fontSize: 11, fontWeight: 700, padding: "5px 11px", borderRadius: 6, border: "1px solid #dfe5e1", background: "transparent", color: "#69736e", cursor: "pointer", fontFamily: "inherit" }}
             >{lang === "es" ? "EN" : "ES"}</button>
           </header>
-          {trackToken ? <TrackPage token={trackToken} /> : <DiagnoseResultPage pendingId={diagnosePendingId} />}
+          {trackToken ? <TrackPage token={trackToken} /> : outcomeToken ? <OutcomeSurveyPage token={outcomeToken} /> : <DiagnoseResultPage pendingId={diagnosePendingId} />}
         </>
       ) : portal === "landing" && page === "home" ? (
         <>

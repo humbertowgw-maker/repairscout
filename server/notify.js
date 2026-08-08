@@ -220,18 +220,22 @@ const STAGE_MESSAGES = {
   },
 };
 
-export async function sendStageUpdateNotification({ customerEmail, customerPhone, customerName, vehicle, stage, trackUrl, lang = "es" }) {
+export async function sendStageUpdateNotification({ customerEmail, customerPhone, customerName, vehicle, stage, trackUrl, surveyUrl, lang = "es" }) {
   const msgFn = STAGE_MESSAGES[stage];
   if (!msgFn) return {};
 
   const isEn = lang === "en";
-  const smsBody = msgFn[isEn ? "en" : "es"](vehicle) + (trackUrl ? ` Track: ${trackUrl}` : "");
+  const surveyPrompt = isEn ? "Did this fix it?" : "¿Esto resolvió tu problema?";
+  const smsBody = msgFn[isEn ? "en" : "es"](vehicle)
+    + (trackUrl ? ` Track: ${trackUrl}` : "")
+    + (surveyUrl ? ` ${surveyPrompt} ${surveyUrl}` : "");
   const subject = isEn ? `Repair update: ${stage} — ${vehicle}` : `Actualización de reparación: ${stage} — ${vehicle}`;
   const html = `<div style="font-family:system-ui;max-width:520px;margin:0 auto">
     <h2 style="color:#1e3a5f">RepairScout</h2>
     <p>Hi ${customerName},</p>
     <p>${msgFn[isEn ? "en" : "es"](vehicle)}</p>
     ${trackUrl ? `<a href="${trackUrl}" style="display:inline-block;background:#1e3a5f;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700">Track your repair →</a>` : ""}
+    ${surveyUrl ? `<p style="margin-top:16px"><a href="${surveyUrl}" style="color:#1e3a5f;font-weight:700">${surveyPrompt} →</a></p>` : ""}
   </div>`;
 
   const results = {};

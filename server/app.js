@@ -48,6 +48,12 @@ import {
   updateRepairStage,
   upsertPhoneVerification,
   upsertShopProfile,
+  createOutcomeSurvey,
+  getOutcomeByToken,
+  respondToOutcomeSurvey,
+  shopConfirmOutcome,
+  listOutcomesForReview,
+  adminReviewOutcome,
 } from "./database.js";
 import { diagnoseVehicle, getDiagnosisProviderStatus } from "./diagnosis.js";
 import { buildQuoteFromDiagnosis } from "./parts.js";
@@ -625,6 +631,18 @@ app.patch("/api/quotes/:id/repair-stage", requireAuth, async (request, response)
   const updated = await updateRepairStage({ id: request.params.id, stage: parsed.data.stage });
   if (!updated) return response.status(404).json({ error: "No encontramos esa cotización." });
 
+  // On completion, seed a confirmed-fix outcome survey so we can ask "did this fix it?"
+  // in the same notification that already fires below — see repair_outcomes in database.js.
+  let surveyUrl = null;
+  if (parsed.data.stage === "Completed") {
+    try {
+      const outcome = await createOutcomeSurvey(updated);
+      surveyUrl = `${process.env.APP_URL || "https://repairscout.app"}/outcome/${outcome.surveyToken}`;
+    } catch (e) {
+      console.error("[outcome-survey] failed to create:", e.message);
+    }
+  }
+
   // Notify customer of stage change (fire-and-forget)
   if (updated.customerEmail || updated.customerPhone) {
     const veh = updated.vehicle || {};
@@ -636,10 +654,72 @@ app.patch("/api/quotes/:id/repair-stage", requireAuth, async (request, response)
       vehicle: vehicleStr,
       stage: parsed.data.stage,
       trackUrl: `${process.env.APP_URL || "https://repairscout.app"}/track/${updated.token}`,
+      surveyUrl,
     }).catch((e) => console.error("[stage-notify]", e.message));
   }
 
   response.json({ quote: updated });
+});
+
+// ── Confirmed-fix outcome survey (public, token-gated) ─────────────────────
+
+app.get("/api/outcomes/:token", async (request, response) => {
+  const outcome = await getOutcomeByToken(request.params.token).catch(() => null);
+  if (!outcome) return response.status(404).json({ error: "Encuesta no encontrada." });
+  response.json({ outcome });
+});
+
+const outcomeResponseInput = z.object({
+  worked: z.boolean(),
+  notes: z.string().max(2000).optional(),
+  costActual: z.number().nonnegative().optional(),
+});
+
+app.post("/api/outcomes/:token/respond", async (request, response) => {
+  const parsed = outcomeResponseInput.safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: "Respuesta no válida." });
+  const outcome = await respondToOutcomeSurvey(request.params.token, parsed.data);
+  if (!outcome) return response.status(404).json({ error: "Encuesta no encontrada." });
+  response.json({ outcome });
+});
+
+// ── Shop confirms an outcome (moderation step 1 of 2 before it's trusted) ──
+
+app.patch("/api/quotes/:id/outcome", requireAuth, async (request, response) => {
+  if (request.user.role !== "shop") {
+    return response.status(403).json({ error: "Solo el taller puede confirmar el resultado." });
+  }
+  const ownerCheckOutcome = await getItemizedQuoteById(request.params.id).catch(() => null);
+  if (!ownerCheckOutcome) return response.status(404).json({ error: "Cotización no encontrada." });
+  if (ownerCheckOutcome.userId !== request.user.id) return response.status(403).json({ error: "Acceso no autorizado." });
+
+  const outcomes = await listOutcomesForReview({}).catch(() => []);
+  const outcome = outcomes.find((o) => o.itemizedQuoteId === request.params.id);
+  if (!outcome) return response.status(404).json({ error: "No hay encuesta de resultado para esta cotización." });
+
+  const confirmed = await shopConfirmOutcome(outcome.id);
+  response.json({ outcome: confirmed });
+});
+
+// ── Admin: review outcomes (moderation step 2 — the SureTrack-style editorial gate) ──
+
+app.get("/api/admin/outcomes", requireAuth, requireAdmin, async (request, response) => {
+  const tier = request.query.tier;
+  const outcomes = await listOutcomesForReview(tier ? { tier } : {});
+  response.json({ outcomes });
+});
+
+const adminReviewInput = z.object({
+  approve: z.boolean(),
+  guideCategory: z.string().max(80).optional(),
+});
+
+app.patch("/api/admin/outcomes/:id/review", requireAuth, requireAdmin, async (request, response) => {
+  const parsed = adminReviewInput.safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: "Datos de revisión no válidos." });
+  const outcome = await adminReviewOutcome(request.params.id, request.user.id, parsed.data);
+  if (!outcome) return response.status(404).json({ error: "Resultado no encontrado." });
+  response.json({ outcome });
 });
 
 // ── Cron: check tracking status 3x/day ───────────────────────────────────

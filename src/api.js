@@ -123,6 +123,32 @@ export function approveRepairQuote(token) {
   });
 }
 
+export function getOutcomeSurvey(token) {
+  return request(`/api/outcomes/${encodeURIComponent(token)}`);
+}
+
+export function respondToOutcomeSurvey(token, input) {
+  return request(`/api/outcomes/${encodeURIComponent(token)}/respond`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function shopConfirmOutcome(quoteId) {
+  return request(`/api/quotes/${encodeURIComponent(quoteId)}/outcome`, { method: "PATCH" });
+}
+
+export function getAdminOutcomes(tier) {
+  return request(`/api/admin/outcomes${tier ? `?tier=${encodeURIComponent(tier)}` : ""}`);
+}
+
+export function adminReviewOutcome(id, input) {
+  return request(`/api/admin/outcomes/${encodeURIComponent(id)}/review`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
 export function updateRepairStage(quoteId, stage) {
   return request(`/api/quotes/${encodeURIComponent(quoteId)}/repair-stage`, {
     method: "PATCH",

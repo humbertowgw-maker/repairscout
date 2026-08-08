@@ -107,6 +107,7 @@ import {
 } from "./api";
 import { T, confidenceDisplay, safetyLevelDisplay, statusDisplay, quoteStatusKeys } from "./i18n";
 import { matchGuideForCause } from "./repairGuides";
+import { obdBluetoothSupported, connectObdAdapter } from "./obdBluetooth";
 import brakePadsGuideImg from "./assets/guides/front-brake-pads.svg";
 import batteryGuideImg from "./assets/guides/battery-and-terminals.svg";
 
@@ -2809,6 +2810,27 @@ function CustomerPortal({ user, onRequireAuth }) {
   const [description, setDescription] = useState(defaultDesc);
   const [obdCodesInput, setObdCodesInput] = useState("");
   const [openGuide, setOpenGuide] = useState(null);
+  const [obdScanning, setObdScanning] = useState(false);
+  const [obdScanError, setObdScanError] = useState("");
+
+  const scanObdAdapter = async () => {
+    setObdScanning(true);
+    setObdScanError("");
+    try {
+      const codes = await connectObdAdapter();
+      if (codes.length === 0) {
+        setObdScanError(isEn ? "Connected, but no stored codes were found." : "Conectado, pero no se encontraron códigos almacenados.");
+        return;
+      }
+      const existing = obdCodesInput.split(/[\s,]+/).map((c) => c.trim().toUpperCase()).filter(Boolean);
+      const merged = [...new Set([...existing, ...codes])];
+      setObdCodesInput(merged.join(", "));
+    } catch (e) {
+      setObdScanError(e.message || (isEn ? "Couldn't connect to the adapter." : "No se pudo conectar al adaptador."));
+    } finally {
+      setObdScanning(false);
+    }
+  };
   const [zip, setZip] = useState("95814");
   const [radius, setRadius] = useState(t("r25"));
   const [requestedShops, setRequestedShops] = useState([]);
@@ -3019,6 +3041,21 @@ function CustomerPortal({ user, onRequireAuth }) {
             placeholder={t("obdPlaceholder")}
           />
           <small className="obd-hint">{t("obdHint")}</small>
+          {obdBluetoothSupported() && (
+            <div style={{ marginTop: 8 }}>
+              <button
+                type="button"
+                onClick={scanObdAdapter}
+                disabled={obdScanning}
+                style={{ fontSize: 12, color: "#1f7251", background: "none", border: "1px solid #1f7251", borderRadius: 6, padding: "6px 12px", cursor: "pointer", fontWeight: 700 }}
+              >
+                {obdScanning
+                  ? (isEn ? "Scanning…" : "Escaneando…")
+                  : (isEn ? "🔵 Scan with Bluetooth OBD-II adapter" : "🔵 Escanear con adaptador OBD-II Bluetooth")}
+              </button>
+              {obdScanError && <p style={{ fontSize: 11, color: "#dc2626", marginTop: 4 }}>{obdScanError}</p>}
+            </div>
+          )}
           <div className="quick-symptoms">
             {symptoms.map((s) => (
               <button key={s} onClick={() => setDescription(`${description} ${s}.`.trim())}>{s}</button>

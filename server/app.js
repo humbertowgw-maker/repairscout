@@ -57,6 +57,7 @@ import {
 } from "./database.js";
 import { diagnoseVehicle, getDiagnosisProviderStatus } from "./diagnosis.js";
 import { REPAIR_GUIDES } from "./repair-guides.js";
+import { lookupCodes } from "./obd-codes.js";
 import { buildQuoteFromDiagnosis } from "./parts.js";
 import { sendQuoteNotification, sendShopApprovalNotification, sendInvoiceNotification, sendStageUpdateNotification } from "./notify.js";
 import { searchRepairShops } from "./shops.js";
@@ -926,6 +927,18 @@ app.get("/api/diagnose/result/:id", async (request, response) => {
   if (!pending.paid) return response.status(402).json({ error: "Pago pendiente.", pending: true });
   if (!pending.result) return response.json({ ready: false, paid: true });
   return response.json({ ready: true, paid: true, result: pending.result, vehicle: pending.vehicle });
+});
+
+// ── OBD-II code lookup (used right after a Bluetooth scan, before submitting) ─
+
+app.get("/api/obd/lookup", (request, response) => {
+  const codes = String(request.query.codes || "")
+    .split(",")
+    .map((c) => c.trim())
+    .filter(Boolean);
+  if (!codes.length) return response.status(400).json({ error: "No codes provided." });
+  const { found, unknown } = lookupCodes(codes);
+  return response.json({ found, unknown });
 });
 
 // ── Parts search (AI-generated local + online results) ────────────────────────

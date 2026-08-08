@@ -767,6 +767,7 @@ const freeDiagInput = z.object({
   vehicle: z.record(z.string(), z.any()).optional(),
   mileage: z.string().max(30).optional(),
   description: z.string().min(8).max(2000),
+  obdCodes: z.array(z.string()).max(10).optional(),
   zip: z.string().min(5).max(10),
   language: z.string().max(5).optional(),
 });
@@ -775,7 +776,7 @@ app.post("/api/diagnose/free", limiter(15 * 60 * 1000, 30), async (request, resp
   const parsed = freeDiagInput.safeParse(request.body);
   if (!parsed.success) return response.status(400).json({ error: "Faltan datos para el diagnóstico." });
 
-  const { phone, vehicle, mileage, description, zip, language } = parsed.data;
+  const { phone, vehicle, mileage, description, obdCodes, zip, language } = parsed.data;
   const normalizedPhone = normalizePhone(phone);
 
   const verification = await getPhoneVerification(normalizedPhone);
@@ -784,7 +785,7 @@ app.post("/api/diagnose/free", limiter(15 * 60 * 1000, 30), async (request, resp
 
   try {
     await markPhoneUsedFree(normalizedPhone);
-    const result = await diagnoseVehicle({ vehicle: vehicle || {}, mileage, description, zip, language: language || "es" });
+    const result = await diagnoseVehicle({ vehicle: vehicle || {}, mileage, description, obdCodes, zip, language: language || "es" });
     await saveDiagnosis({ id: crypto.randomUUID(), userId: request.user?.id || null, vehicle: vehicle || {}, description, zip, result, createdAt: new Date().toISOString() });
     return response.json({ result, free: true });
   } catch (e) {

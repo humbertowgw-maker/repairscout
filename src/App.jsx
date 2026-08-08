@@ -2564,6 +2564,7 @@ function CustomerPortal({ user, onRequireAuth }) {
 
   const [step, setStep] = useState(0);
   const [description, setDescription] = useState(defaultDesc);
+  const [obdCodesInput, setObdCodesInput] = useState("");
   const [zip, setZip] = useState("95814");
   const [radius, setRadius] = useState(t("r25"));
   const [requestedShops, setRequestedShops] = useState([]);
@@ -2668,12 +2669,16 @@ function CustomerPortal({ user, onRequireAuth }) {
   const steps = [t("step1"), t("step2"), t("step3"), t("step4")];
   const symptoms = [t("symptom1"), t("symptom2"), t("symptom3")];
   const confMap = confidenceDisplay[lang] || confidenceDisplay.es;
+  const obdCodes = obdCodesInput
+    .split(/[\s,]+/)
+    .map((code) => code.trim().toUpperCase())
+    .filter(Boolean);
 
   return (
     <main>
       {otpOpen && (
         <PhoneOtpModal
-          diagnosisInput={{ vehicle, mileage, description, zip, language: lang }}
+          diagnosisInput={{ vehicle, mileage, description, obdCodes, zip, language: lang }}
           onFreeResult={onFreeResult}
           onClose={() => setOtpOpen(false)}
         />
@@ -2761,6 +2766,15 @@ function CustomerPortal({ user, onRequireAuth }) {
           <input className="plain-input" id="mileage" value={mileage} onChange={(e) => setMileage(e.target.value)} />
           <label htmlFor="description">{t("descLabel")}</label>
           <textarea id="description" value={description} onChange={(e) => setDescription(e.target.value)} />
+          <label htmlFor="obdCodes">{t("obdLabel")}</label>
+          <input
+            className="plain-input"
+            id="obdCodes"
+            value={obdCodesInput}
+            onChange={(e) => setObdCodesInput(e.target.value)}
+            placeholder={t("obdPlaceholder")}
+          />
+          <small className="obd-hint">{t("obdHint")}</small>
           <div className="quick-symptoms">
             {symptoms.map((s) => (
               <button key={s} onClick={() => setDescription(`${description} ${s}.`.trim())}>{s}</button>

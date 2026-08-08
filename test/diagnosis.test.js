@@ -30,7 +30,7 @@ vi.mock("ai", () => ({
   jsonSchema: vi.fn((schema) => schema),
 }));
 
-const { diagnoseVehicle, getDiagnosisProviderStatus } = await import("../server/diagnosis.js");
+const { diagnoseVehicle, getDiagnosisProviderStatus, groundedCodesSection } = await import("../server/diagnosis.js");
 
 const ALL_PROVIDER_ENV_KEYS = [
   "GROQ_API_KEY",
@@ -279,5 +279,34 @@ describe("diagnoseVehicle — response coercion through the shared schema", () =
     expect(result.safetyLevel).toBe("moderado"); // invalid level coerced to default
     expect(result.possibleCauses.length).toBeGreaterThan(0); // backfilled
     expect(result.estimate).toMatchObject({ low: 0, high: 0 });
+  });
+});
+
+describe("groundedCodesSection", () => {
+  it("returns an empty string when no codes are present anywhere", () => {
+    expect(groundedCodesSection({ description: "makes a strange noise", obdCodes: [] }, "en")).toBe("");
+  });
+
+  it("includes the verified definition for a known code from the structured field", () => {
+    const section = groundedCodesSection({ description: "check engine light", obdCodes: ["P0420"] }, "en");
+    expect(section).toContain("P0420");
+    expect(section).toContain("Catalyst System Efficiency Below Threshold");
+  });
+
+  it("also picks up a code typed directly into the free-text description", () => {
+    const section = groundedCodesSection({ description: "scanner showed P0301, misfiring", obdCodes: [] }, "en");
+    expect(section).toContain("P0301");
+    expect(section).toContain("Cylinder 1 Misfire Detected");
+  });
+
+  it("flags unrecognized codes explicitly instead of staying silent about them", () => {
+    const section = groundedCodesSection({ description: "code P1234 appeared", obdCodes: [] }, "en");
+    expect(section).toContain("P1234");
+    expect(section.toLowerCase()).toContain("manufacturer-specific");
+  });
+
+  it("writes the unknown-code note in Spanish when language is es", () => {
+    const section = groundedCodesSection({ description: "salió el código P1234", obdCodes: [] }, "es");
+    expect(section).toContain("específicos del fabricante");
   });
 });

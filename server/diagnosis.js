@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
 import { generateText, Output, jsonSchema } from "ai";
 import { z } from "zod";
+import { extractCodesFromText, lookupCodes } from "./obd-codes.js";
 
 const ScenarioSchema = z.object({
   scenario: z.string(),
@@ -89,11 +90,49 @@ function preferredProvider(input) {
     return "gemini";
   }
 
-  if (/(obd|p\d{4}|código|code|sensor|eléctric|electric|alternador|check engine|luz del motor)/.test(symptoms)) {
-    return "openrouter";
-  }
+  // Previously routed OBD-code-related queries to OpenRouter's free tier — the weakest
+  // model in the chain, for exactly the kind of query that most needs to get a specific
+  // technical fact right. Grounding the prompt with verified code definitions (see
+  // groundedCodesSection below) matters more here than which model handles it, so this
+  // no longer special-cases code-related queries into a weaker provider.
 
   return "groq";
+}
+
+/**
+ * Look up any OBD-II codes the user provided (either the structured obdCodes field or
+ * codes typed directly into the free-text description) against the generic-code
+ * dictionary, and build a section for the prompt that gives the model verified ground
+ * truth instead of relying on its own recall — recall is exactly what was producing
+ * wrong answers before.
+ */
+export function groundedCodesSection(input, language) {
+  const isEn = language === "en";
+  const candidates = [
+    ...(input.obdCodes || []),
+    ...extractCodesFromText(input.description),
+  ];
+  if (candidates.length === 0) return "";
+
+  const { found, unknown } = lookupCodes(candidates);
+  const lines = [];
+
+  if (Object.keys(found).length > 0) {
+    lines.push(isEn ? "Verified OBD-II code definitions (use these exact definitions, do not guess a different meaning):" : "Definiciones verificadas de códigos OBD-II (usa exactamente estas definiciones, no adivines un significado distinto):");
+    for (const [code, meaning] of Object.entries(found)) {
+      lines.push(`- ${code}: ${meaning}`);
+    }
+  }
+
+  if (unknown.length > 0) {
+    lines.push(
+      isEn
+        ? `The following codes were provided but are not in the verified generic-code dataset (likely manufacturer-specific): ${unknown.join(", ")}. Say explicitly that these need to be looked up against the vehicle manufacturer's specific code list rather than guessing a definition.`
+        : `Los siguientes códigos fueron proporcionados pero no están en el conjunto de códigos genéricos verificados (probablemente específicos del fabricante): ${unknown.join(", ")}. Indica explícitamente que deben buscarse en la lista de códigos específica del fabricante en lugar de adivinar una definición.`
+    );
+  }
+
+  return lines.length ? `\n\n${lines.join("\n")}` : "";
 }
 
 function orderedProviders(input) {
@@ -507,7 +546,8 @@ Las probabilidades son estimaciones orientativas y no deben sumar necesariamente
 Los costos deben ser rangos prudentes en dólares estadounidenses basados en reparación independiente general.
 Para cada posible causa, explica la razón técnica de POR QUÉ los síntomas descritos apuntan a esa causa — sé específico sobre la relación mecánica o eléctrica. Incluye cómo confirmar o descartar la causa.
 Siempre proporciona un escenario realista de mejor y peor caso para que el conductor conozca el rango de costos que enfrenta.
-Genera 3–4 preguntas de seguimiento específicas que, si se responden, reducirían significativamente el diagnóstico.`;
+Genera 3–4 preguntas de seguimiento específicas que, si se responden, reducirían significativamente el diagnóstico.`
+    + groundedCodesSection(input, language);
 
   const userPrompt = JSON.stringify({
     vehicle,

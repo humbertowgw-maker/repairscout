@@ -123,6 +123,10 @@ export function approveRepairQuote(token) {
   });
 }
 
+export function getGuideStats(guideId) {
+  return request(`/api/guides/${encodeURIComponent(guideId)}/stats`);
+}
+
 export function getOutcomeSurvey(token) {
   return request(`/api/outcomes/${encodeURIComponent(token)}`);
 }

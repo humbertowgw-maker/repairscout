@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 320" width="480" height="320" role="img" aria-labelledby="alternatorTitle">
+  <title id="alternatorTitle">Alternator with pulley, belt, and output terminal</title>
+  <rect width="480" height="320" fill="#0d1829" rx="12"/>
+
+  <!-- Alternator body -->
+  <rect x="150" y="90" width="150" height="130" rx="14" fill="#1e293b" stroke="#f97316" stroke-width="3"/>
+  <circle cx="225" cy="130" r="30" fill="#334155" stroke="#475569" stroke-width="3"/>
+
+  <!-- Pulley -->
+  <circle cx="225" cy="230" r="34" fill="#1e293b" stroke="#64748b" stroke-width="4"/>
+  <circle cx="225" cy="230" r="10" fill="#334155" stroke="#475569" stroke-width="2"/>
+
+  <!-- Belt (partial) -->
+  <path d="M 191 230 A 34 34 0 0 1 259 230" fill="none" stroke="#94a3b8" stroke-width="6" stroke-linecap="round"/>
+
+  <!-- Output terminal + wire -->
+  <rect x="290" y="110" width="20" height="20" rx="4" fill="#dc2626" stroke="#fca5a5" stroke-width="2"/>
+  <line x1="310" y1="120" x2="360" y2="120" stroke="#dc2626" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- Electrical connector -->
+  <rect x="288" y="150" width="28" height="20" rx="4" fill="#475569" stroke="#64748b" stroke-width="2"/>
+
+  <g font-family="system-ui, sans-serif" font-size="13" fill="#e2e8f0">
+    <text x="70" y="100">Alternator</text>
+    <line x1="115" y1="95" x2="150" y2="110" stroke="#94a3b8" stroke-width="1.5"/>
+
+    <text x="365" y="115">Output terminal</text>
+    <line x1="360" y1="120" x2="312" y2="120" stroke="#94a3b8" stroke-width="1.5"/>
+
+    <text x="330" y="180">Connector</text>
+    <line x1="325" y1="175" x2="318" y2="160" stroke="#94a3b8" stroke-width="1.5"/>
+
+    <text x="80" y="290">Pulley + belt</text>
+    <line x1="130" y1="283" x2="195" y2="245" stroke="#94a3b8" stroke-width="1.5"/>
+  </g>
+</svg>

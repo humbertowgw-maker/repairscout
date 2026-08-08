@@ -1,6 +1,7 @@
 import pg from "pg";
 import crypto from "node:crypto";
 import { readStore, updateStore } from "./store.js";
+import { matchGuideForCause } from "./repair-guides.js";
 
 const { Pool } = pg;
 const pool = process.env.DATABASE_URL
@@ -1211,6 +1212,12 @@ export async function createOutcomeSurvey(quote) {
   const surveyToken = crypto.randomBytes(20).toString("hex");
   const now = new Date().toISOString();
   const firstCause = quote.diagnosis?.possibleCauses?.[0] || {};
+  const fixDescription = quote.diagnosis?.estimate?.repairLabel || "";
+  // Best-guess auto-tag from the same regex used to surface guides on the diagnosis
+  // itself — admin review can still override this via adminReviewOutcome, but most
+  // outcomes never get manually reviewed, so an unset guide_category would mean most
+  // confirmed fixes never feed back into the guide UI's "confirmed by N repairs" stat.
+  const guideCategory = matchGuideForCause({ title: firstCause.title, reason: fixDescription })?.id || null;
 
   const record = {
     id,
@@ -1218,8 +1225,9 @@ export async function createOutcomeSurvey(quote) {
     vehicle: quote.vehicle || {},
     symptomDescription: quote.diagnosis?.summary || "",
     causeTitle: firstCause.title || "",
-    fixDescription: quote.diagnosis?.estimate?.repairLabel || "",
+    fixDescription,
     obdCodes: quote.diagnosis?.obdCodes || [],
+    guideCategory,
     surveyToken,
     surveySentAt: now,
   };
@@ -1228,8 +1236,8 @@ export async function createOutcomeSurvey(quote) {
     await ensureDatabase();
     const result = await pool.query(
       `insert into repair_outcomes
-        (id, itemized_quote_id, vehicle, symptom_description, cause_title, fix_description, obd_codes, survey_token, survey_sent_at)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        (id, itemized_quote_id, vehicle, symptom_description, cause_title, fix_description, obd_codes, guide_category, survey_token, survey_sent_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
        returning *`,
       [
         record.id,
@@ -1239,6 +1247,7 @@ export async function createOutcomeSurvey(quote) {
         record.causeTitle,
         record.fixDescription,
         record.obdCodes,
+        record.guideCategory,
         record.surveyToken,
         record.surveySentAt,
       ],
@@ -1416,4 +1425,42 @@ export async function findConfirmedOutcomes({ make, model, symptomKeywords = [],
     )
     .sort((a, b) => (b.trustTier === "admin_reviewed") - (a.trustTier === "admin_reviewed"))
     .slice(0, limit);
+}
+
+function summarizeGuideOutcomes(rows) {
+  const costs = rows.map((o) => o.costActual).filter((c) => c != null).sort((a, b) => a - b);
+  const mid = Math.floor(costs.length / 2);
+  return {
+    count: rows.length,
+    costCount: costs.length,
+    costLow: costs.length ? costs[0] : null,
+    costHigh: costs.length ? costs[costs.length - 1] : null,
+    costMedian: costs.length ? (costs.length % 2 ? costs[mid] : Math.round((costs[mid - 1] + costs[mid]) / 2)) : null,
+    sampleFixes: [...new Set(rows.map((o) => o.fixDescription).filter(Boolean))].slice(0, 3),
+  };
+}
+
+/**
+ * Real-world stats for a repair guide category, drawn only from confirmed outcomes
+ * (shop-confirmed or admin-reviewed, worked = true) — this is the actual "confirmed by
+ * N real repairs" payoff the repair_outcomes.guide_category column exists for. Returns
+ * count: 0 (not null) when there's no confirmed data yet, so callers can render an
+ * honest "not yet confirmed" state instead of erroring.
+ */
+export async function getGuideStats(guideId) {
+  if (!guideId) return { count: 0, costCount: 0, costLow: null, costHigh: null, costMedian: null, sampleFixes: [] };
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query(
+      `select * from repair_outcomes
+       where guide_category = $1 and trust_tier in ('shop_confirmed', 'admin_reviewed') and worked = true`,
+      [guideId],
+    );
+    return summarizeGuideOutcomes(result.rows.map(mapOutcomeRow));
+  }
+  const store = await readStore();
+  const rows = (store.repairOutcomes || []).filter(
+    (o) => o.guideCategory === guideId && (o.trustTier === "shop_confirmed" || o.trustTier === "admin_reviewed") && o.worked === true,
+  );
+  return summarizeGuideOutcomes(rows);
 }

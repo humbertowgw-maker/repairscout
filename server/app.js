@@ -54,6 +54,7 @@ import {
   shopConfirmOutcome,
   listOutcomesForReview,
   adminReviewOutcome,
+  getGuideStats,
 } from "./database.js";
 import { diagnoseVehicle, getDiagnosisProviderStatus } from "./diagnosis.js";
 import { REPAIR_GUIDES } from "./repair-guides.js";
@@ -661,6 +662,14 @@ app.patch("/api/quotes/:id/repair-stage", requireAuth, async (request, response)
   }
 
   response.json({ quote: updated });
+});
+
+// ── Repair guide real-world confirmed-cost stats (public, read-only, no PII) ──
+
+app.get("/api/guides/:id/stats", async (request, response) => {
+  if (!REPAIR_GUIDES[request.params.id]) return response.status(404).json({ error: "Guía no encontrada." });
+  const stats = await getGuideStats(request.params.id).catch(() => ({ count: 0, costCount: 0, costLow: null, costHigh: null, costMedian: null, sampleFixes: [] }));
+  response.json({ stats });
 });
 
 // ── Confirmed-fix outcome survey (public, token-gated) ─────────────────────

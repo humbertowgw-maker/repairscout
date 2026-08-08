@@ -104,12 +104,30 @@ import {
   shopConfirmOutcome,
   getAdminOutcomes,
   adminReviewOutcome,
+  getGuideStats,
 } from "./api";
 import { T, confidenceDisplay, safetyLevelDisplay, statusDisplay, quoteStatusKeys } from "./i18n";
 import { matchGuideForCause } from "./repairGuides";
 import { obdBluetoothSupported, connectObdAdapter } from "./obdBluetooth";
 import brakePadsGuideImg from "./assets/guides/front-brake-pads.svg";
 import batteryGuideImg from "./assets/guides/battery-and-terminals.svg";
+import sparkPlugsGuideImg from "./assets/guides/spark-plugs.svg";
+import ignitionCoilGuideImg from "./assets/guides/ignition-coil.svg";
+import serpentineBeltGuideImg from "./assets/guides/serpentine-belt.svg";
+import cabinAirFilterGuideImg from "./assets/guides/cabin-air-filter.svg";
+import engineAirFilterGuideImg from "./assets/guides/engine-air-filter.svg";
+import oilAndFilterGuideImg from "./assets/guides/oil-and-filter-change.svg";
+import o2SensorGuideImg from "./assets/guides/o2-sensor.svg";
+import mafSensorGuideImg from "./assets/guides/mass-airflow-sensor.svg";
+import catalyticConverterGuideImg from "./assets/guides/catalytic-converter.svg";
+import evapGasCapGuideImg from "./assets/guides/evap-gas-cap.svg";
+import thermostatGuideImg from "./assets/guides/thermostat-coolant.svg";
+import alternatorGuideImg from "./assets/guides/alternator.svg";
+import starterMotorGuideImg from "./assets/guides/starter-motor.svg";
+import wheelBearingGuideImg from "./assets/guides/wheel-bearing.svg";
+import headlightBulbGuideImg from "./assets/guides/headlight-bulb.svg";
+import wiperBladesGuideImg from "./assets/guides/wiper-blades.svg";
+import flatTireGuideImg from "./assets/guides/flat-tire-spare.svg";
 
 const LangCtx = React.createContext({ lang: "es", setLang: () => {} });
 function useT() {
@@ -503,12 +521,36 @@ function InvoiceModal({ order, lang, onClose, onSent }) {
 const GUIDE_IMAGES = {
   "front-brake-pads.svg": brakePadsGuideImg,
   "battery-and-terminals.svg": batteryGuideImg,
+  "spark-plugs.svg": sparkPlugsGuideImg,
+  "ignition-coil.svg": ignitionCoilGuideImg,
+  "serpentine-belt.svg": serpentineBeltGuideImg,
+  "cabin-air-filter.svg": cabinAirFilterGuideImg,
+  "engine-air-filter.svg": engineAirFilterGuideImg,
+  "oil-and-filter-change.svg": oilAndFilterGuideImg,
+  "o2-sensor.svg": o2SensorGuideImg,
+  "mass-airflow-sensor.svg": mafSensorGuideImg,
+  "catalytic-converter.svg": catalyticConverterGuideImg,
+  "evap-gas-cap.svg": evapGasCapGuideImg,
+  "thermostat-coolant.svg": thermostatGuideImg,
+  "alternator.svg": alternatorGuideImg,
+  "starter-motor.svg": starterMotorGuideImg,
+  "wheel-bearing.svg": wheelBearingGuideImg,
+  "headlight-bulb.svg": headlightBulbGuideImg,
+  "wiper-blades.svg": wiperBladesGuideImg,
+  "flat-tire-spare.svg": flatTireGuideImg,
 };
 
-function RepairGuideModal({ guide, lang, onClose }) {
+function RepairGuideModal({ guide, lang, onClose, estimate }) {
   const isEn = lang === "en";
   const OVERLAY = { position: "fixed", inset: 0, background: "#000b", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 };
   const CARD = { background: "#0d1829", border: "1px solid #1e2d47", borderRadius: 14, width: "100%", maxWidth: 560, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px #0009" };
+
+  const [stats, setStats] = useState(null);
+  useEffect(() => {
+    if (!guide) return;
+    setStats(null);
+    getGuideStats(guide.id).then((r) => setStats(r.stats)).catch(() => setStats(null));
+  }, [guide?.id]);
 
   if (!guide) return null;
 
@@ -530,6 +572,59 @@ function RepairGuideModal({ guide, lang, onClose }) {
 
           <div style={{ display: "flex", gap: 16, marginBottom: 16, fontSize: 12, color: "#94a3b8" }}>
             <div><strong style={{ color: "#e2e8f0" }}>{isEn ? "Difficulty: " : "Dificultad: "}</strong>{guide.difficulty[isEn ? "en" : "es"]}</div>
+          </div>
+
+          {estimate && (estimate.low != null || estimate.laborHoursLow != null) && (
+            <div style={{ background: "rgba(96,165,250,.08)", border: "1px solid rgba(96,165,250,.25)", borderRadius: 8, padding: "10px 14px", marginBottom: 12 }}>
+              <div style={{ fontSize: 10, color: "#60a5fa", fontWeight: 700, letterSpacing: ".06em", marginBottom: 4 }}>
+                {isEn ? "AI ESTIMATE FOR YOUR DIAGNOSIS" : "ESTIMADO DE IA PARA TU DIAGNÓSTICO"}
+              </div>
+              <div style={{ fontSize: 13, color: "#e2e8f0" }}>
+                {estimate.low != null && <>${estimate.low}–${estimate.high} </>}
+                {estimate.laborHoursLow != null && (
+                  <span style={{ color: "#94a3b8" }}>
+                    · {estimate.laborHoursLow}–{estimate.laborHoursHigh} {isEn ? "hrs labor" : "hrs de mano de obra"}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {stats && stats.count > 0 && (
+            <div style={{ background: "rgba(34,197,94,.08)", border: "1px solid rgba(34,197,94,.25)", borderRadius: 8, padding: "10px 14px", marginBottom: 18 }}>
+              <div style={{ fontSize: 10, color: "#4ade80", fontWeight: 700, letterSpacing: ".06em", marginBottom: 4 }}>
+                {isEn ? `CONFIRMED BY ${stats.count} REAL REPAIRSCOUT REPAIR${stats.count === 1 ? "" : "S"}` : `CONFIRMADO POR ${stats.count} REPARACIÓN${stats.count === 1 ? "" : "ES"} REAL${stats.count === 1 ? "" : "ES"} DE REPAIRSCOUT`}
+              </div>
+              {stats.costCount > 0 && (
+                <div style={{ fontSize: 13, color: "#e2e8f0" }}>
+                  {isEn ? "Typical actual cost: " : "Costo real típico: "}
+                  {stats.costLow === stats.costHigh ? `$${stats.costMedian}` : `$${stats.costLow}–$${stats.costHigh}`}
+                  {stats.costCount > 1 && <span style={{ color: "#94a3b8" }}> ({isEn ? "median" : "mediana"} ${stats.costMedian})</span>}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ fontSize: 11, color: "#64748b", fontWeight: 700, letterSpacing: ".06em", marginBottom: 8 }}>
+              {isEn ? "COMMON SYMPTOMS" : "SÍNTOMAS COMUNES"}
+            </div>
+            <ul style={{ margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 4 }}>
+              {(guide.commonSymptoms?.[isEn ? "en" : "es"] || []).map((s) => (
+                <li key={s} style={{ fontSize: 12, color: "#cbd5e1", lineHeight: 1.5 }}>{s}</li>
+              ))}
+            </ul>
+          </div>
+
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ fontSize: 11, color: "#64748b", fontWeight: 700, letterSpacing: ".06em", marginBottom: 8 }}>
+              {isEn ? "PARTS NEEDED" : "PIEZAS NECESARIAS"}
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {(guide.partsNeeded?.[isEn ? "en" : "es"] || []).map((part) => (
+                <span key={part} style={{ fontSize: 11, background: "rgba(249,115,22,.1)", border: "1px solid rgba(249,115,22,.3)", color: "#fdba74", padding: "4px 10px", borderRadius: 20 }}>{part}</span>
+              ))}
+            </div>
           </div>
 
           <div style={{ marginBottom: 18 }}>
@@ -1419,7 +1514,7 @@ function DiagnosisResultCards({ result, lang, onAskFollowUp }) {
           )}
         </div>
       ))}
-      {openGuide && <RepairGuideModal guide={openGuide} lang={lang} onClose={() => setOpenGuide(null)} />}
+      {openGuide && <RepairGuideModal guide={openGuide} lang={lang} onClose={() => setOpenGuide(null)} estimate={result.estimate} />}
 
       {/* Estimate */}
       {result.estimate && (
@@ -2768,7 +2863,7 @@ function DiagnoseResultPage({ pendingId }) {
                   </div>
                 ))}
               </div>
-              {openGuide && <RepairGuideModal guide={openGuide} lang={lang} onClose={() => setOpenGuide(null)} />}
+              {openGuide && <RepairGuideModal guide={openGuide} lang={lang} onClose={() => setOpenGuide(null)} estimate={state.result.estimate} />}
               {state.result.estimate && (
                 <div className="estimate-card">
                   <div className="eyebrow">{isEn ? "Estimated Repair Cost" : "Costo estimado de reparación"}</div>
@@ -3152,7 +3247,7 @@ function CustomerPortal({ user, onRequireAuth }) {
                 </article>
               ))}
             </div>
-            {openGuide && <RepairGuideModal guide={openGuide} lang={lang} onClose={() => setOpenGuide(null)} />}
+            {openGuide && <RepairGuideModal guide={openGuide} lang={lang} onClose={() => setOpenGuide(null)} estimate={diagnosis?.estimate} />}
             <aside className="estimate-card">
               <span className="eyebrow dark"><CircleDollarSign size={15} /> {t("estimateEyebrow")}</span>
               <div className="big-price">${estimatedTotal.low}–${estimatedTotal.high}</div>

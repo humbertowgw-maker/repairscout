@@ -106,6 +106,9 @@ import {
   adminReviewOutcome,
 } from "./api";
 import { T, confidenceDisplay, safetyLevelDisplay, statusDisplay, quoteStatusKeys } from "./i18n";
+import { matchGuideForCause } from "./repairGuides";
+import brakePadsGuideImg from "./assets/guides/front-brake-pads.svg";
+import batteryGuideImg from "./assets/guides/battery-and-terminals.svg";
 
 const LangCtx = React.createContext({ lang: "es", setLang: () => {} });
 function useT() {
@@ -490,6 +493,78 @@ function InvoiceModal({ order, lang, onClose, onSent }) {
               {sending ? (isEn ? "Sending…" : "Enviando…") : (isEn ? "Send Invoice to Customer" : "Enviar factura al cliente")}
             </button>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const GUIDE_IMAGES = {
+  "front-brake-pads.svg": brakePadsGuideImg,
+  "battery-and-terminals.svg": batteryGuideImg,
+};
+
+function RepairGuideModal({ guide, lang, onClose }) {
+  const isEn = lang === "en";
+  const OVERLAY = { position: "fixed", inset: 0, background: "#000b", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 };
+  const CARD = { background: "#0d1829", border: "1px solid #1e2d47", borderRadius: 14, width: "100%", maxWidth: 560, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px #0009" };
+
+  if (!guide) return null;
+
+  return (
+    <div style={OVERLAY} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={CARD}>
+        <div style={{ padding: "18px 22px", borderBottom: "1px solid #1e2d47", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Wrench size={18} color="#f97316" />
+            <span style={{ fontWeight: 700, fontSize: 15, color: "#f1f5f9" }}>{guide.title[isEn ? "en" : "es"]}</span>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: 20, lineHeight: 1 }}>×</button>
+        </div>
+
+        <div style={{ padding: "18px 22px" }}>
+          {GUIDE_IMAGES[guide.heroImage] && (
+            <img src={GUIDE_IMAGES[guide.heroImage]} alt={guide.title[isEn ? "en" : "es"]} style={{ width: "100%", borderRadius: 8, marginBottom: 16 }} />
+          )}
+
+          <div style={{ display: "flex", gap: 16, marginBottom: 16, fontSize: 12, color: "#94a3b8" }}>
+            <div><strong style={{ color: "#e2e8f0" }}>{isEn ? "Difficulty: " : "Dificultad: "}</strong>{guide.difficulty[isEn ? "en" : "es"]}</div>
+          </div>
+
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ fontSize: 11, color: "#64748b", fontWeight: 700, letterSpacing: ".06em", marginBottom: 8 }}>
+              {isEn ? "TOOLS NEEDED" : "HERRAMIENTAS NECESARIAS"}
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {guide.toolsNeeded[isEn ? "en" : "es"].map((tool) => (
+                <span key={tool} style={{ fontSize: 11, background: "#1e2d47", color: "#cbd5e1", padding: "4px 10px", borderRadius: 20 }}>{tool}</span>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ fontSize: 11, color: "#64748b", fontWeight: 700, letterSpacing: ".06em", marginBottom: 10 }}>
+              {isEn ? "STEPS" : "PASOS"}
+            </div>
+            <ol style={{ margin: 0, paddingLeft: 20, display: "flex", flexDirection: "column", gap: 12 }}>
+              {guide.steps.map((step, i) => (
+                <li key={i} style={{ fontSize: 13, color: "#e2e8f0", lineHeight: 1.5 }}>{step[isEn ? "en" : "es"]}</li>
+              ))}
+            </ol>
+          </div>
+
+          {guide.safetyNote && (
+            <div style={{ background: "rgba(249,115,22,.08)", border: "1px solid rgba(249,115,22,.3)", borderRadius: 8, padding: "12px 14px" }}>
+              <div style={{ fontSize: 11, color: "#f97316", fontWeight: 700, marginBottom: 4 }}>{isEn ? "⚠ SAFETY NOTE" : "⚠ NOTA DE SEGURIDAD"}</div>
+              <p style={{ fontSize: 12, color: "#cbd5e1", margin: 0, lineHeight: 1.5 }}>{guide.safetyNote[isEn ? "en" : "es"]}</p>
+            </div>
+          )}
+
+          <p style={{ fontSize: 10, color: "#475569", marginTop: 16, marginBottom: 0 }}>
+            {isEn
+              ? "General guidance, not vehicle-specific. Refer to your owner's manual and factory torque specs before working on your brakes or electrical system."
+              : "Guía general, no específica de tu vehículo. Consulta el manual del propietario y las especificaciones de torque de fábrica antes de trabajar en los frenos o el sistema eléctrico."}
+          </p>
         </div>
       </div>
     </div>
@@ -1283,6 +1358,7 @@ function DiagnosisResultCards({ result, lang, onAskFollowUp }) {
   const [scenarioTab, setScenarioTab] = useState("best");
   const [verifyBatchId, setVerifyBatchId] = useState(null);
   const [verifyLoading, setVerifyLoading] = useState(false);
+  const [openGuide, setOpenGuide] = useState(null);
 
   const buildQuote = async () => {
     setScoutQuoteLoading(true);
@@ -1332,8 +1408,17 @@ function DiagnosisResultCards({ result, lang, onAskFollowUp }) {
               <span><strong style={{ color: "#93c5fd" }}>{t("scoutVerify")}</strong> {c.test}</span>
             </div>
           )}
+          {matchGuideForCause(c) && (
+            <button
+              onClick={() => setOpenGuide(matchGuideForCause(c))}
+              style={{ marginTop: 8, fontSize: 11, color: "#f97316", background: "none", border: "1px solid rgba(249,115,22,.35)", borderRadius: 6, padding: "6px 10px", cursor: "pointer", fontWeight: 700 }}
+            >
+              {isEn ? "View step-by-step guide →" : "Ver guía paso a paso →"}
+            </button>
+          )}
         </div>
       ))}
+      {openGuide && <RepairGuideModal guide={openGuide} lang={lang} onClose={() => setOpenGuide(null)} />}
 
       {/* Estimate */}
       {result.estimate && (
@@ -2616,6 +2701,7 @@ function DiagnoseResultPage({ pendingId }) {
   const { lang } = useLang();
   const isEn = lang === "en";
   const [state, setState] = useState({ ready: false, result: null, vehicle: null, error: "" });
+  const [openGuide, setOpenGuide] = useState(null);
 
   useEffect(() => {
     let attempts = 0;
@@ -2669,10 +2755,19 @@ function DiagnoseResultPage({ pendingId }) {
                       </div>
                       <p>{cause.reason}</p>
                       {cause.test && <small><Search size={11} />{cause.test}</small>}
+                      {matchGuideForCause(cause) && (
+                        <button
+                          onClick={() => setOpenGuide(matchGuideForCause(cause))}
+                          style={{ marginTop: 8, fontSize: 11, color: "#f97316", background: "none", border: "1px solid rgba(249,115,22,.4)", borderRadius: 6, padding: "6px 10px", cursor: "pointer", fontWeight: 700, display: "block" }}
+                        >
+                          {isEn ? "View step-by-step guide →" : "Ver guía paso a paso →"}
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
               </div>
+              {openGuide && <RepairGuideModal guide={openGuide} lang={lang} onClose={() => setOpenGuide(null)} />}
               {state.result.estimate && (
                 <div className="estimate-card">
                   <div className="eyebrow">{isEn ? "Estimated Repair Cost" : "Costo estimado de reparación"}</div>
@@ -2713,6 +2808,7 @@ function CustomerPortal({ user, onRequireAuth }) {
   const [step, setStep] = useState(0);
   const [description, setDescription] = useState(defaultDesc);
   const [obdCodesInput, setObdCodesInput] = useState("");
+  const [openGuide, setOpenGuide] = useState(null);
   const [zip, setZip] = useState("95814");
   const [radius, setRadius] = useState(t("r25"));
   const [requestedShops, setRequestedShops] = useState([]);
@@ -3007,10 +3103,19 @@ function CustomerPortal({ user, onRequireAuth }) {
                     <div className="title-line"><h3>{r.title}</h3><span className={`status ${r.tone}`}>{r.urgency}</span></div>
                     <p>{r.reason}</p>
                     <small><Search size={14} /> {t("scoutVerify")} {r.test}</small>
+                    {matchGuideForCause(r) && (
+                      <button
+                        onClick={() => setOpenGuide(matchGuideForCause(r))}
+                        style={{ marginTop: 8, fontSize: 12, color: "#f97316", background: "none", border: "1px solid rgba(249,115,22,.4)", borderRadius: 6, padding: "6px 10px", cursor: "pointer", fontWeight: 700, display: "block" }}
+                      >
+                        {isEn ? "View step-by-step guide →" : "Ver guía paso a paso →"}
+                      </button>
+                    )}
                   </div>
                 </article>
               ))}
             </div>
+            {openGuide && <RepairGuideModal guide={openGuide} lang={lang} onClose={() => setOpenGuide(null)} />}
             <aside className="estimate-card">
               <span className="eyebrow dark"><CircleDollarSign size={15} /> {t("estimateEyebrow")}</span>
               <div className="big-price">${estimatedTotal.low}–${estimatedTotal.high}</div>

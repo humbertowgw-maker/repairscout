@@ -56,6 +56,7 @@ import {
   adminReviewOutcome,
 } from "./database.js";
 import { diagnoseVehicle, getDiagnosisProviderStatus } from "./diagnosis.js";
+import { REPAIR_GUIDES } from "./repair-guides.js";
 import { buildQuoteFromDiagnosis } from "./parts.js";
 import { sendQuoteNotification, sendShopApprovalNotification, sendInvoiceNotification, sendStageUpdateNotification } from "./notify.js";
 import { searchRepairShops } from "./shops.js";
@@ -711,7 +712,9 @@ app.get("/api/admin/outcomes", requireAuth, requireAdmin, async (request, respon
 
 const adminReviewInput = z.object({
   approve: z.boolean(),
-  guideCategory: z.string().max(80).optional(),
+  // Validated against real guide IDs rather than a free-text field, so an admin can't
+  // typo a category that will never match anything in the guide library on the frontend.
+  guideCategory: z.enum(Object.keys(REPAIR_GUIDES)).optional(),
 });
 
 app.patch("/api/admin/outcomes/:id/review", requireAuth, requireAdmin, async (request, response) => {

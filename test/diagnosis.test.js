@@ -1,11 +1,17 @@
 // Tests for the multi-provider AI diagnosis fallback chain in server/diagnosis.js.
 //
 // The module tries providers in a configurable order (default:
-// groq,gemini,openrouter,ai-gateway,openai), coercing every response through
-// one Zod schema, and falls back to rule-based diagnosis when nothing is
-// configured or every provider fails. These tests mock all network/SDK calls
-// (fetch for Groq/Gemini/OpenRouter, the `ai` package for the Vercel AI
-// Gateway, and the `openai` SDK) so nothing here ever calls a real provider.
+// groq,gemini,openrouter,ollama,ai-gateway,openai), coercing every response
+// through one Zod schema, and falls back to rule-based diagnosis when
+// nothing is configured or every provider fails. These tests mock all
+// network/SDK calls (fetch for Groq/Gemini/OpenRouter/Ollama, the `ai`
+// package for the Vercel AI Gateway, and the `openai` SDK) so nothing here
+// ever calls a real provider.
+//
+// Ollama is opt-out, not opt-in (no API key needed — it's our own hardware),
+// so unlike every other provider it stays "configured" even with a fully
+// cleared env. Tests that specifically need zero configured providers stub
+// OLLAMA_DIAGNOSIS_ENABLED=false explicitly.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -42,6 +48,7 @@ const ALL_PROVIDER_ENV_KEYS = [
   "VERCEL",
   "OPENAI_API_KEY",
   "AI_PROVIDER_ORDER",
+  "OLLAMA_DIAGNOSIS_ENABLED",
 ];
 
 function fullyValidDiagnosis(overrides = {}) {
@@ -113,6 +120,7 @@ afterEach(() => {
 
 describe("diagnoseVehicle — no providers configured", () => {
   it("skips every network/SDK call and returns the rule-based fallback", async () => {
+    vi.stubEnv("OLLAMA_DIAGNOSIS_ENABLED", "false");
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
@@ -132,6 +140,7 @@ describe("diagnoseVehicle — no providers configured", () => {
   });
 
   it("reports no configured providers via getDiagnosisProviderStatus", () => {
+    vi.stubEnv("OLLAMA_DIAGNOSIS_ENABLED", "false");
     const status = getDiagnosisProviderStatus();
     expect(status.configured).toEqual([]);
     expect(status.preferredOrder).toEqual([]);
@@ -171,6 +180,7 @@ describe("diagnoseVehicle — fallback chain ordering", () => {
       "https://api.groq.com/openai/v1/chat/completions",
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
       "https://openrouter.ai/api/v1/chat/completions",
+      "http://100.72.213.92:11435/v1/chat/completions",
     ]);
     expect(generateTextMock).toHaveBeenCalledTimes(1);
     expect(openaiParseMock).toHaveBeenCalledTimes(1);

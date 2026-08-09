@@ -49,6 +49,7 @@ const PROVIDER_LABELS = {
   groq: "Groq",
   gemini: "Google Gemini",
   openrouter: "OpenRouter",
+  ollama: "Local (Ollama)",
   "ai-gateway": "Vercel AI Gateway",
   openai: "OpenAI",
 };
@@ -58,6 +59,10 @@ function configuredProviders() {
     groq: Boolean(process.env.GROQ_API_KEY),
     gemini: Boolean(process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY),
     openrouter: Boolean(process.env.OPENROUTER_API_KEY),
+    // No API key needed — this is our own hardware. Disable explicitly via
+    // OLLAMA_DIAGNOSIS_ENABLED=false if the fleet node is ever unreachable
+    // for an extended period and you'd rather skip straight to paid.
+    ollama: process.env.OLLAMA_DIAGNOSIS_ENABLED !== "false",
     "ai-gateway": Boolean(
       process.env.AI_GATEWAY_API_KEY ||
       process.env.VERCEL_OIDC_TOKEN ||
@@ -69,8 +74,12 @@ function configuredProviders() {
 
 function providerOrder() {
   const configured = configuredProviders();
+  // ollama sits after the free-tier cloud providers (Groq/Gemini/OpenRouter
+  // are proven-good models, no reason to skip them) but before any paid
+  // option — it's genuinely free and unlimited, so it's the resilience
+  // layer for when free-tier rate limits get exhausted, not a replacement.
   const requested = String(
-    process.env.AI_PROVIDER_ORDER || "groq,gemini,openrouter,ai-gateway,openai",
+    process.env.AI_PROVIDER_ORDER || "groq,gemini,openrouter,ollama,ai-gateway,openai",
   )
     .split(",")
     .map((provider) => provider.trim().toLowerCase())
@@ -190,10 +199,10 @@ function extractJson(text, language = "es") {
   return diagnosis.data;
 }
 
-async function requestJson(url, options, provider) {
+async function requestJson(url, options, provider, timeoutMs = 25_000) {
   const response = await fetch(url, {
     ...options,
-    signal: AbortSignal.timeout(25_000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const payload = await response.json().catch(() => ({}));
 
@@ -283,6 +292,34 @@ async function diagnoseWithOpenRouter(systemPrompt, userPrompt, language) {
       "X-Title": "RepairScout",
     },
   });
+}
+
+async function diagnoseWithOllama(systemPrompt, userPrompt, language) {
+  // Measured 2026-08-09: a full 4-cause detailed response takes ~11-20s on
+  // this hardware, close to the 25s default other (much faster) providers
+  // use. This is a fallback tier only reached after free-tier options are
+  // exhausted, so a longer wait for a genuinely free result is the right
+  // tradeoff over failing fast into the generic hardcoded fallback.
+  const payload = await requestJson(
+    `${process.env.OLLAMA_DIAGNOSIS_URL || "http://100.72.213.92:11435"}/v1/chat/completions`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: process.env.OLLAMA_DIAGNOSIS_MODEL || "qwen2.5:7b",
+        messages: [
+          { role: "system", content: jsonInstruction(systemPrompt) },
+          { role: "user", content: userPrompt },
+        ],
+        temperature: 0.2,
+        response_format: { type: "json_object" },
+      }),
+    },
+    "Ollama",
+    60_000,
+  );
+
+  return extractJson(payload?.choices?.[0]?.message?.content, language);
 }
 
 async function diagnoseWithGemini(systemPrompt, userPrompt, language) {
@@ -522,6 +559,7 @@ Genera 3–4 preguntas de seguimiento específicas que, si se responden, reducir
     groq: (sp, up) => diagnoseWithGroq(sp, up, language),
     gemini: (sp, up) => diagnoseWithGemini(sp, up, language),
     openrouter: (sp, up) => diagnoseWithOpenRouter(sp, up, language),
+    ollama: (sp, up) => diagnoseWithOllama(sp, up, language),
     "ai-gateway": diagnoseWithGateway,
     openai: diagnoseWithOpenAI,
   };

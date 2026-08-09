@@ -99,8 +99,35 @@ import {
   updateAdminPlan,
   setTrackingInfo,
   sendInvoice,
+  getOutcomeSurvey,
+  respondToOutcomeSurvey,
+  shopConfirmOutcome,
+  getAdminOutcomes,
+  adminReviewOutcome,
+  getGuideStats,
 } from "./api";
 import { T, confidenceDisplay, safetyLevelDisplay, statusDisplay, quoteStatusKeys } from "./i18n";
+import { matchGuideForCause } from "./repairGuides";
+import { obdBluetoothSupported, connectObdAdapter } from "./obdBluetooth";
+import brakePadsGuideImg from "./assets/guides/front-brake-pads.svg";
+import batteryGuideImg from "./assets/guides/battery-and-terminals.svg";
+import sparkPlugsGuideImg from "./assets/guides/spark-plugs.svg";
+import ignitionCoilGuideImg from "./assets/guides/ignition-coil.svg";
+import serpentineBeltGuideImg from "./assets/guides/serpentine-belt.svg";
+import cabinAirFilterGuideImg from "./assets/guides/cabin-air-filter.svg";
+import engineAirFilterGuideImg from "./assets/guides/engine-air-filter.svg";
+import oilAndFilterGuideImg from "./assets/guides/oil-and-filter-change.svg";
+import o2SensorGuideImg from "./assets/guides/o2-sensor.svg";
+import mafSensorGuideImg from "./assets/guides/mass-airflow-sensor.svg";
+import catalyticConverterGuideImg from "./assets/guides/catalytic-converter.svg";
+import evapGasCapGuideImg from "./assets/guides/evap-gas-cap.svg";
+import thermostatGuideImg from "./assets/guides/thermostat-coolant.svg";
+import alternatorGuideImg from "./assets/guides/alternator.svg";
+import starterMotorGuideImg from "./assets/guides/starter-motor.svg";
+import wheelBearingGuideImg from "./assets/guides/wheel-bearing.svg";
+import headlightBulbGuideImg from "./assets/guides/headlight-bulb.svg";
+import wiperBladesGuideImg from "./assets/guides/wiper-blades.svg";
+import flatTireGuideImg from "./assets/guides/flat-tire-spare.svg";
 
 const LangCtx = React.createContext({ lang: "es", setLang: () => {} });
 function useT() {
@@ -485,6 +512,155 @@ function InvoiceModal({ order, lang, onClose, onSent }) {
               {sending ? (isEn ? "Sending…" : "Enviando…") : (isEn ? "Send Invoice to Customer" : "Enviar factura al cliente")}
             </button>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const GUIDE_IMAGES = {
+  "front-brake-pads.svg": brakePadsGuideImg,
+  "battery-and-terminals.svg": batteryGuideImg,
+  "spark-plugs.svg": sparkPlugsGuideImg,
+  "ignition-coil.svg": ignitionCoilGuideImg,
+  "serpentine-belt.svg": serpentineBeltGuideImg,
+  "cabin-air-filter.svg": cabinAirFilterGuideImg,
+  "engine-air-filter.svg": engineAirFilterGuideImg,
+  "oil-and-filter-change.svg": oilAndFilterGuideImg,
+  "o2-sensor.svg": o2SensorGuideImg,
+  "mass-airflow-sensor.svg": mafSensorGuideImg,
+  "catalytic-converter.svg": catalyticConverterGuideImg,
+  "evap-gas-cap.svg": evapGasCapGuideImg,
+  "thermostat-coolant.svg": thermostatGuideImg,
+  "alternator.svg": alternatorGuideImg,
+  "starter-motor.svg": starterMotorGuideImg,
+  "wheel-bearing.svg": wheelBearingGuideImg,
+  "headlight-bulb.svg": headlightBulbGuideImg,
+  "wiper-blades.svg": wiperBladesGuideImg,
+  "flat-tire-spare.svg": flatTireGuideImg,
+};
+
+function RepairGuideModal({ guide, lang, onClose, estimate }) {
+  const isEn = lang === "en";
+  const OVERLAY = { position: "fixed", inset: 0, background: "#000b", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 };
+  const CARD = { background: "#0d1829", border: "1px solid #1e2d47", borderRadius: 14, width: "100%", maxWidth: 560, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px #0009" };
+
+  const [stats, setStats] = useState(null);
+  useEffect(() => {
+    if (!guide) return;
+    setStats(null);
+    getGuideStats(guide.id).then((r) => setStats(r.stats)).catch(() => setStats(null));
+  }, [guide?.id]);
+
+  if (!guide) return null;
+
+  return (
+    <div style={OVERLAY} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={CARD}>
+        <div style={{ padding: "18px 22px", borderBottom: "1px solid #1e2d47", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Wrench size={18} color="#f97316" />
+            <span style={{ fontWeight: 700, fontSize: 15, color: "#f1f5f9" }}>{guide.title[isEn ? "en" : "es"]}</span>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: 20, lineHeight: 1 }}>×</button>
+        </div>
+
+        <div style={{ padding: "18px 22px" }}>
+          {GUIDE_IMAGES[guide.heroImage] && (
+            <img src={GUIDE_IMAGES[guide.heroImage]} alt={guide.title[isEn ? "en" : "es"]} style={{ width: "100%", borderRadius: 8, marginBottom: 16 }} />
+          )}
+
+          <div style={{ display: "flex", gap: 16, marginBottom: 16, fontSize: 12, color: "#94a3b8" }}>
+            <div><strong style={{ color: "#e2e8f0" }}>{isEn ? "Difficulty: " : "Dificultad: "}</strong>{guide.difficulty[isEn ? "en" : "es"]}</div>
+          </div>
+
+          {estimate && (estimate.low != null || estimate.laborHoursLow != null) && (
+            <div style={{ background: "rgba(96,165,250,.08)", border: "1px solid rgba(96,165,250,.25)", borderRadius: 8, padding: "10px 14px", marginBottom: 12 }}>
+              <div style={{ fontSize: 10, color: "#60a5fa", fontWeight: 700, letterSpacing: ".06em", marginBottom: 4 }}>
+                {isEn ? "AI ESTIMATE FOR YOUR DIAGNOSIS" : "ESTIMADO DE IA PARA TU DIAGNÓSTICO"}
+              </div>
+              <div style={{ fontSize: 13, color: "#e2e8f0" }}>
+                {estimate.low != null && <>${estimate.low}–${estimate.high} </>}
+                {estimate.laborHoursLow != null && (
+                  <span style={{ color: "#94a3b8" }}>
+                    · {estimate.laborHoursLow}–{estimate.laborHoursHigh} {isEn ? "hrs labor" : "hrs de mano de obra"}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {stats && stats.count > 0 && (
+            <div style={{ background: "rgba(34,197,94,.08)", border: "1px solid rgba(34,197,94,.25)", borderRadius: 8, padding: "10px 14px", marginBottom: 18 }}>
+              <div style={{ fontSize: 10, color: "#4ade80", fontWeight: 700, letterSpacing: ".06em", marginBottom: 4 }}>
+                {isEn ? `CONFIRMED BY ${stats.count} REAL REPAIRSCOUT REPAIR${stats.count === 1 ? "" : "S"}` : `CONFIRMADO POR ${stats.count} REPARACIÓN${stats.count === 1 ? "" : "ES"} REAL${stats.count === 1 ? "" : "ES"} DE REPAIRSCOUT`}
+              </div>
+              {stats.costCount > 0 && (
+                <div style={{ fontSize: 13, color: "#e2e8f0" }}>
+                  {isEn ? "Typical actual cost: " : "Costo real típico: "}
+                  {stats.costLow === stats.costHigh ? `$${stats.costMedian}` : `$${stats.costLow}–$${stats.costHigh}`}
+                  {stats.costCount > 1 && <span style={{ color: "#94a3b8" }}> ({isEn ? "median" : "mediana"} ${stats.costMedian})</span>}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ fontSize: 11, color: "#64748b", fontWeight: 700, letterSpacing: ".06em", marginBottom: 8 }}>
+              {isEn ? "COMMON SYMPTOMS" : "SÍNTOMAS COMUNES"}
+            </div>
+            <ul style={{ margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 4 }}>
+              {(guide.commonSymptoms?.[isEn ? "en" : "es"] || []).map((s) => (
+                <li key={s} style={{ fontSize: 12, color: "#cbd5e1", lineHeight: 1.5 }}>{s}</li>
+              ))}
+            </ul>
+          </div>
+
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ fontSize: 11, color: "#64748b", fontWeight: 700, letterSpacing: ".06em", marginBottom: 8 }}>
+              {isEn ? "PARTS NEEDED" : "PIEZAS NECESARIAS"}
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {(guide.partsNeeded?.[isEn ? "en" : "es"] || []).map((part) => (
+                <span key={part} style={{ fontSize: 11, background: "rgba(249,115,22,.1)", border: "1px solid rgba(249,115,22,.3)", color: "#fdba74", padding: "4px 10px", borderRadius: 20 }}>{part}</span>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ fontSize: 11, color: "#64748b", fontWeight: 700, letterSpacing: ".06em", marginBottom: 8 }}>
+              {isEn ? "TOOLS NEEDED" : "HERRAMIENTAS NECESARIAS"}
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {guide.toolsNeeded[isEn ? "en" : "es"].map((tool) => (
+                <span key={tool} style={{ fontSize: 11, background: "#1e2d47", color: "#cbd5e1", padding: "4px 10px", borderRadius: 20 }}>{tool}</span>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ fontSize: 11, color: "#64748b", fontWeight: 700, letterSpacing: ".06em", marginBottom: 10 }}>
+              {isEn ? "STEPS" : "PASOS"}
+            </div>
+            <ol style={{ margin: 0, paddingLeft: 20, display: "flex", flexDirection: "column", gap: 12 }}>
+              {guide.steps.map((step, i) => (
+                <li key={i} style={{ fontSize: 13, color: "#e2e8f0", lineHeight: 1.5 }}>{step[isEn ? "en" : "es"]}</li>
+              ))}
+            </ol>
+          </div>
+
+          {guide.safetyNote && (
+            <div style={{ background: "rgba(249,115,22,.08)", border: "1px solid rgba(249,115,22,.3)", borderRadius: 8, padding: "12px 14px" }}>
+              <div style={{ fontSize: 11, color: "#f97316", fontWeight: 700, marginBottom: 4 }}>{isEn ? "⚠ SAFETY NOTE" : "⚠ NOTA DE SEGURIDAD"}</div>
+              <p style={{ fontSize: 12, color: "#cbd5e1", margin: 0, lineHeight: 1.5 }}>{guide.safetyNote[isEn ? "en" : "es"]}</p>
+            </div>
+          )}
+
+          <p style={{ fontSize: 10, color: "#475569", marginTop: 16, marginBottom: 0 }}>
+            {isEn
+              ? "General guidance, not vehicle-specific. Refer to your owner's manual and factory torque specs before working on your brakes or electrical system."
+              : "Guía general, no específica de tu vehículo. Consulta el manual del propietario y las especificaciones de torque de fábrica antes de trabajar en los frenos o el sistema eléctrico."}
+          </p>
         </div>
       </div>
     </div>
@@ -1278,6 +1454,7 @@ function DiagnosisResultCards({ result, lang, onAskFollowUp }) {
   const [scenarioTab, setScenarioTab] = useState("best");
   const [verifyBatchId, setVerifyBatchId] = useState(null);
   const [verifyLoading, setVerifyLoading] = useState(false);
+  const [openGuide, setOpenGuide] = useState(null);
 
   const buildQuote = async () => {
     setScoutQuoteLoading(true);
@@ -1327,8 +1504,17 @@ function DiagnosisResultCards({ result, lang, onAskFollowUp }) {
               <span><strong style={{ color: "#93c5fd" }}>{t("scoutVerify")}</strong> {c.test}</span>
             </div>
           )}
+          {matchGuideForCause(c) && (
+            <button
+              onClick={() => setOpenGuide(matchGuideForCause(c))}
+              style={{ marginTop: 8, fontSize: 11, color: "#f97316", background: "none", border: "1px solid rgba(249,115,22,.35)", borderRadius: 6, padding: "6px 10px", cursor: "pointer", fontWeight: 700 }}
+            >
+              {isEn ? "View step-by-step guide →" : "Ver guía paso a paso →"}
+            </button>
+          )}
         </div>
       ))}
+      {openGuide && <RepairGuideModal guide={openGuide} lang={lang} onClose={() => setOpenGuide(null)} estimate={result.estimate} />}
 
       {/* Estimate */}
       {result.estimate && (
@@ -2179,11 +2365,11 @@ function TrackPage({ token }) {
               <div style={{ fontSize: 11, color: "#f97316", fontWeight: 600, letterSpacing: ".08em", marginBottom: 4 }}>
                 {isEn ? "YOUR VEHICLE" : "TU VEHÍCULO"}
               </div>
-              <h1 style={{ fontSize: 22, fontWeight: 700, color: "#f1f5f9", margin: 0 }}>
+              <h1 style={{ fontSize: 22, fontWeight: 700, color: "#17211d", margin: 0 }}>
                 {[veh.year, veh.make, veh.model].filter(Boolean).join(" ") || (isEn ? "Your Vehicle" : "Tu vehículo")}
               </h1>
-              <p style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>
-                {isEn ? "Repair quote for" : "Cotización de reparación para"} <strong style={{ color: "#94a3b8" }}>{quote.customerName}</strong>
+              <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>
+                {isEn ? "Repair quote for" : "Cotización de reparación para"} <strong style={{ color: "#334155" }}>{quote.customerName}</strong>
               </p>
             </div>
 
@@ -2462,12 +2648,156 @@ function PhoneOtpModal({ diagnosisInput, onFreeResult, onClose }) {
   );
 }
 
+/* ── Outcome Survey Page (public, token-gated — "did this fix it?") ── */
+
+function OutcomeSurveyPage({ token }) {
+  const { lang } = useLang();
+  const isEn = lang === "en";
+  const [outcome, setOutcome] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [worked, setWorked] = useState(null);
+  const [notes, setNotes] = useState("");
+  const [costActual, setCostActual] = useState("");
+  const [submitted, setSubmitted] = useState(false);
+
+  useEffect(() => {
+    getOutcomeSurvey(token)
+      .then(({ outcome: o }) => {
+        setOutcome(o);
+        if (o.worked != null) { setWorked(o.worked); setSubmitted(true); }
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [token]);
+
+  const submit = async () => {
+    if (worked === null) return;
+    setSubmitting(true);
+    try {
+      const payload = { worked, notes: notes.trim() || undefined };
+      const cost = Number(costActual);
+      if (costActual.trim() && Number.isFinite(cost) && cost >= 0) payload.costActual = cost;
+      const { outcome: o } = await respondToOutcomeSurvey(token, payload);
+      setOutcome(o);
+      setSubmitted(true);
+    } catch (e) { setError(e.message); }
+    finally { setSubmitting(false); }
+  };
+
+  const veh = outcome?.vehicle || {};
+  const vehicleLabel = [veh.year, veh.make, veh.model].filter(Boolean).join(" ") || (isEn ? "your vehicle" : "tu vehículo");
+
+  return (
+    <main className="legal-page" style={{ minHeight: "100vh" }}>
+      <section className="legal-card" style={{ maxWidth: 560 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 24 }}>
+          <span style={{
+            background: "#1e3a5f", borderRadius: 8, padding: "6px 10px",
+            color: "#f97316", display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 700,
+          }}>
+            <Wrench size={16} /> RepairScout
+          </span>
+        </div>
+
+        {loading && (
+          <div style={{ textAlign: "center", padding: "48px 0", color: "#475569" }}>
+            {isEn ? "Loading…" : "Cargando…"}
+          </div>
+        )}
+
+        {error && !loading && (
+          <div style={{ textAlign: "center", padding: "48px 0" }}>
+            <div style={{ fontSize: 36, marginBottom: 12 }}>🔍</div>
+            <div style={{ color: "#f87171", fontWeight: 600, marginBottom: 8 }}>
+              {isEn ? "Survey not found" : "Encuesta no encontrada"}
+            </div>
+            <p style={{ fontSize: 12, color: "var(--muted)" }}>{error}</p>
+          </div>
+        )}
+
+        {outcome && !submitted && (
+          <>
+            <h1 style={{ fontSize: 20, fontWeight: 700, color: "#17211d", margin: "0 0 6px" }}>
+              {isEn ? `Did this fix your ${vehicleLabel}?` : `¿Esto resolvió el problema de tu ${vehicleLabel}?`}
+            </h1>
+            {outcome.causeTitle && (
+              <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 20 }}>
+                {isEn ? "Repair: " : "Reparación: "}<strong style={{ color: "#334155" }}>{outcome.fixDescription || outcome.causeTitle}</strong>
+              </p>
+            )}
+
+            <div style={{ display: "flex", gap: 10, marginBottom: 18 }}>
+              <button
+                className={worked === true ? "primary" : ""}
+                onClick={() => setWorked(true)}
+                style={{ flex: 1 }}
+              >
+                {isEn ? "Yes, it worked" : "Sí, funcionó"}
+              </button>
+              <button
+                className={worked === false ? "primary" : ""}
+                onClick={() => setWorked(false)}
+                style={{ flex: 1 }}
+              >
+                {isEn ? "No, still broken" : "No, sigue fallando"}
+              </button>
+            </div>
+
+            <label htmlFor="outcome-notes" style={{ fontSize: 12, color: "#334155", display: "block", marginBottom: 6 }}>
+              {isEn ? "What actually worked? (optional)" : "¿Qué fue lo que funcionó? (opcional)"}
+            </label>
+            <textarea
+              id="outcome-notes"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              style={{ width: "100%", minHeight: 80, marginBottom: 14 }}
+            />
+
+            <label htmlFor="outcome-cost" style={{ fontSize: 12, color: "#334155", display: "block", marginBottom: 6 }}>
+              {isEn ? "Actual cost paid (optional)" : "Costo real pagado (opcional)"}
+            </label>
+            <input
+              id="outcome-cost"
+              className="plain-input"
+              type="number"
+              min="0"
+              value={costActual}
+              onChange={(e) => setCostActual(e.target.value)}
+              placeholder="$"
+              style={{ marginBottom: 20 }}
+            />
+
+            <button className="primary" onClick={submit} disabled={worked === null || submitting} style={{ width: "100%" }}>
+              {submitting ? "…" : (isEn ? "Submit" : "Enviar")}
+            </button>
+          </>
+        )}
+
+        {submitted && (
+          <div style={{
+            background: "rgba(74,222,128,.06)", border: "1px solid rgba(74,222,128,.3)",
+            borderRadius: 10, padding: "20px", textAlign: "center",
+          }}>
+            <Check size={20} style={{ color: "#4ade80", marginBottom: 6 }} />
+            <div style={{ color: "#4ade80", fontWeight: 700, fontSize: 14 }}>
+              {isEn ? "Thanks — this helps future diagnoses." : "Gracias — esto ayuda a futuros diagnósticos."}
+            </div>
+          </div>
+        )}
+      </section>
+    </main>
+  );
+}
+
 /* ── Diagnose Result Page (post-Stripe return) ── */
 
 function DiagnoseResultPage({ pendingId }) {
   const { lang } = useLang();
   const isEn = lang === "en";
   const [state, setState] = useState({ ready: false, result: null, vehicle: null, error: "" });
+  const [openGuide, setOpenGuide] = useState(null);
 
   useEffect(() => {
     let attempts = 0;
@@ -2521,10 +2851,19 @@ function DiagnoseResultPage({ pendingId }) {
                       </div>
                       <p>{cause.reason}</p>
                       {cause.test && <small><Search size={11} />{cause.test}</small>}
+                      {matchGuideForCause(cause) && (
+                        <button
+                          onClick={() => setOpenGuide(matchGuideForCause(cause))}
+                          style={{ marginTop: 8, fontSize: 11, color: "#f97316", background: "none", border: "1px solid rgba(249,115,22,.4)", borderRadius: 6, padding: "6px 10px", cursor: "pointer", fontWeight: 700, display: "block" }}
+                        >
+                          {isEn ? "View step-by-step guide →" : "Ver guía paso a paso →"}
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
               </div>
+              {openGuide && <RepairGuideModal guide={openGuide} lang={lang} onClose={() => setOpenGuide(null)} estimate={state.result.estimate} />}
               {state.result.estimate && (
                 <div className="estimate-card">
                   <div className="eyebrow">{isEn ? "Estimated Repair Cost" : "Costo estimado de reparación"}</div>
@@ -2564,6 +2903,29 @@ function CustomerPortal({ user, onRequireAuth }) {
 
   const [step, setStep] = useState(0);
   const [description, setDescription] = useState(defaultDesc);
+  const [obdCodesInput, setObdCodesInput] = useState("");
+  const [openGuide, setOpenGuide] = useState(null);
+  const [obdScanning, setObdScanning] = useState(false);
+  const [obdScanError, setObdScanError] = useState("");
+
+  const scanObdAdapter = async () => {
+    setObdScanning(true);
+    setObdScanError("");
+    try {
+      const codes = await connectObdAdapter();
+      if (codes.length === 0) {
+        setObdScanError(isEn ? "Connected, but no stored codes were found." : "Conectado, pero no se encontraron códigos almacenados.");
+        return;
+      }
+      const existing = obdCodesInput.split(/[\s,]+/).map((c) => c.trim().toUpperCase()).filter(Boolean);
+      const merged = [...new Set([...existing, ...codes])];
+      setObdCodesInput(merged.join(", "));
+    } catch (e) {
+      setObdScanError(e.message || (isEn ? "Couldn't connect to the adapter." : "No se pudo conectar al adaptador."));
+    } finally {
+      setObdScanning(false);
+    }
+  };
   const [zip, setZip] = useState("95814");
   const [radius, setRadius] = useState(t("r25"));
   const [requestedShops, setRequestedShops] = useState([]);
@@ -2668,12 +3030,16 @@ function CustomerPortal({ user, onRequireAuth }) {
   const steps = [t("step1"), t("step2"), t("step3"), t("step4")];
   const symptoms = [t("symptom1"), t("symptom2"), t("symptom3")];
   const confMap = confidenceDisplay[lang] || confidenceDisplay.es;
+  const obdCodes = obdCodesInput
+    .split(/[\s,]+/)
+    .map((code) => code.trim().toUpperCase())
+    .filter(Boolean);
 
   return (
     <main>
       {otpOpen && (
         <PhoneOtpModal
-          diagnosisInput={{ vehicle, mileage, description, zip, language: lang }}
+          diagnosisInput={{ vehicle, mileage, description, obdCodes, zip, language: lang }}
           onFreeResult={onFreeResult}
           onClose={() => setOtpOpen(false)}
         />
@@ -2761,6 +3127,30 @@ function CustomerPortal({ user, onRequireAuth }) {
           <input className="plain-input" id="mileage" value={mileage} onChange={(e) => setMileage(e.target.value)} />
           <label htmlFor="description">{t("descLabel")}</label>
           <textarea id="description" value={description} onChange={(e) => setDescription(e.target.value)} />
+          <label htmlFor="obdCodes">{t("obdLabel")}</label>
+          <input
+            className="plain-input"
+            id="obdCodes"
+            value={obdCodesInput}
+            onChange={(e) => setObdCodesInput(e.target.value)}
+            placeholder={t("obdPlaceholder")}
+          />
+          <small className="obd-hint">{t("obdHint")}</small>
+          {obdBluetoothSupported() && (
+            <div style={{ marginTop: 8 }}>
+              <button
+                type="button"
+                onClick={scanObdAdapter}
+                disabled={obdScanning}
+                style={{ fontSize: 12, color: "#1f7251", background: "none", border: "1px solid #1f7251", borderRadius: 6, padding: "6px 12px", cursor: "pointer", fontWeight: 700 }}
+              >
+                {obdScanning
+                  ? (isEn ? "Scanning…" : "Escaneando…")
+                  : (isEn ? "🔵 Scan with Bluetooth OBD-II adapter" : "🔵 Escanear con adaptador OBD-II Bluetooth")}
+              </button>
+              {obdScanError && <p style={{ fontSize: 11, color: "#dc2626", marginTop: 4 }}>{obdScanError}</p>}
+            </div>
+          )}
           <div className="quick-symptoms">
             {symptoms.map((s) => (
               <button key={s} onClick={() => setDescription(`${description} ${s}.`.trim())}>{s}</button>
@@ -2845,10 +3235,19 @@ function CustomerPortal({ user, onRequireAuth }) {
                     <div className="title-line"><h3>{r.title}</h3><span className={`status ${r.tone}`}>{r.urgency}</span></div>
                     <p>{r.reason}</p>
                     <small><Search size={14} /> {t("scoutVerify")} {r.test}</small>
+                    {matchGuideForCause(r) && (
+                      <button
+                        onClick={() => setOpenGuide(matchGuideForCause(r))}
+                        style={{ marginTop: 8, fontSize: 12, color: "#f97316", background: "none", border: "1px solid rgba(249,115,22,.4)", borderRadius: 6, padding: "6px 10px", cursor: "pointer", fontWeight: 700, display: "block" }}
+                      >
+                        {isEn ? "View step-by-step guide →" : "Ver guía paso a paso →"}
+                      </button>
+                    )}
                   </div>
                 </article>
               ))}
             </div>
+            {openGuide && <RepairGuideModal guide={openGuide} lang={lang} onClose={() => setOpenGuide(null)} estimate={diagnosis?.estimate} />}
             <aside className="estimate-card">
               <span className="eyebrow dark"><CircleDollarSign size={15} /> {t("estimateEyebrow")}</span>
               <div className="big-price">${estimatedTotal.low}–${estimatedTotal.high}</div>
@@ -3305,22 +3704,34 @@ function AdminPanel() {
   const [users, setUsers] = useState([]);
   const [quotes, setQuotes] = useState([]);
   const [plans, setPlans] = useState([]);
+  const [outcomes, setOutcomes] = useState([]);
   const [activeTab, setActiveTab] = useState("overview");
   const [loading, setLoading] = useState(true);
   const [roleUpdating, setRoleUpdating] = useState("");
   const [planSaving, setPlanSaving] = useState("");
   const [planMessage, setPlanMessage] = useState("");
+  const [outcomeReviewing, setOutcomeReviewing] = useState("");
 
   useEffect(() => {
-    Promise.allSettled([getAdminStats(), getAdminUsers(), getAdminQuotes(), getAdminPlans()])
-      .then(([s, u, q, p]) => {
+    Promise.allSettled([getAdminStats(), getAdminUsers(), getAdminQuotes(), getAdminPlans(), getAdminOutcomes("shop_confirmed")])
+      .then(([s, u, q, p, o]) => {
         if (s.status === "fulfilled") setStats(s.value);
         if (u.status === "fulfilled") setUsers(u.value.users || []);
         if (q.status === "fulfilled") setQuotes(q.value.quotes || []);
         if (p.status === "fulfilled") setPlans(p.value.plans || []);
+        if (o.status === "fulfilled") setOutcomes(o.value.outcomes || []);
       })
       .finally(() => setLoading(false));
   }, []);
+
+  const reviewOutcome = async (id, approve) => {
+    setOutcomeReviewing(id);
+    try {
+      await adminReviewOutcome(id, { approve });
+      setOutcomes((prev) => prev.filter((o) => o.id !== id));
+    } catch (e) { console.error(e); }
+    finally { setOutcomeReviewing(""); }
+  };
 
   const changeRole = async (id, role) => {
     setRoleUpdating(id);
@@ -3376,7 +3787,7 @@ function AdminPanel() {
 
       {/* Tab switcher */}
       <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
-        {[["overview", isEn ? "Overview" : "Resumen"], ["plans", isEn ? "Plans" : "Planes"], ["users", isEn ? "Users" : "Usuarios"], ["quotes", isEn ? "All Quotes" : "Cotizaciones"]].map(([key, label]) => (
+        {[["overview", isEn ? "Overview" : "Resumen"], ["plans", isEn ? "Plans" : "Planes"], ["users", isEn ? "Users" : "Usuarios"], ["quotes", isEn ? "All Quotes" : "Cotizaciones"], ["outcomes", isEn ? `Outcomes (${outcomes.length})` : `Resultados (${outcomes.length})`]].map(([key, label]) => (
           <button key={key} onClick={() => setActiveTab(key)} style={{
             padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer",
             background: activeTab === key ? "#a855f7" : "#1e2d47", color: "#fff",
@@ -3545,6 +3956,58 @@ function AdminPanel() {
                 <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: q.status === "Cotizada" ? "#1d4ed822" : "#33415522", color: q.status === "Cotizada" ? "#3b82f6" : "#94a3b8" }}>
                   {q.status}
                 </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── Outcomes: SureTrack-style editorial gate — shop-confirmed reports awaiting final review before they ground future diagnoses ── */}
+      {activeTab === "outcomes" && (
+        <div>
+          <p style={{ fontSize: 11, color: "#64748b", marginBottom: 12 }}>
+            {isEn
+              ? "Shop-confirmed outcomes awaiting review. Approving lets this feed future AI diagnoses for similar vehicles/symptoms."
+              : "Resultados confirmados por talleres pendientes de revisión. Aprobar permite que esto informe futuros diagnósticos de IA para vehículos/síntomas similares."}
+          </p>
+          {outcomes.length === 0 && (
+            <p style={{ fontSize: 12, color: "#94a3b8" }}>{isEn ? "Nothing pending review." : "Nada pendiente de revisión."}</p>
+          )}
+          {outcomes.map((o) => (
+            <div key={o.id} style={{ ...STAT_DARK, marginBottom: 8 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 8 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, color: "#e2e8f0", fontSize: 13 }}>
+                    {[o.vehicle?.year, o.vehicle?.make, o.vehicle?.model].filter(Boolean).join(" ")}
+                  </div>
+                  <div style={{ fontSize: 11, color: "#94a3b8" }}>{o.causeTitle}{o.fixDescription ? ` → ${o.fixDescription}` : ""}</div>
+                  {o.obdCodes?.length > 0 && (
+                    <div style={{ fontSize: 10, color: "#64748b", marginTop: 2 }}>{o.obdCodes.join(", ")}</div>
+                  )}
+                </div>
+                <span style={{
+                  fontSize: 10, padding: "2px 6px", borderRadius: 4, flexShrink: 0,
+                  background: o.worked ? "#16a34a22" : "#dc262622", color: o.worked ? "#4ade80" : "#f87171",
+                }}>
+                  {o.worked ? (isEn ? "Worked" : "Funcionó") : (isEn ? "Didn't work" : "No funcionó")}
+                </span>
+              </div>
+              {o.notes && <p style={{ fontSize: 11, color: "#cbd5e1", marginBottom: 8 }}>"{o.notes}"</p>}
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  className="primary small"
+                  disabled={outcomeReviewing === o.id}
+                  onClick={() => reviewOutcome(o.id, true)}
+                >
+                  {isEn ? "Approve" : "Aprobar"}
+                </button>
+                <button
+                  disabled={outcomeReviewing === o.id}
+                  onClick={() => reviewOutcome(o.id, false)}
+                  style={{ background: "#334155", color: "#e2e8f0", border: "none", borderRadius: 9, padding: "10px 16px", fontWeight: 700, cursor: "pointer" }}
+                >
+                  {isEn ? "Reject" : "Rechazar"}
+                </button>
               </div>
             </div>
           ))}
@@ -4286,6 +4749,12 @@ function App() {
     return match ? match[1] : null;
   });
 
+  // Detect /outcome/:token URL (confirmed-fix survey link)
+  const [outcomeToken] = useState(() => {
+    const match = window.location.pathname.match(/^\/outcome\/([a-f0-9]{20,})$/i);
+    return match ? match[1] : null;
+  });
+
   // Detect /diagnose/result?pid=xxx URL (post-Stripe return)
   const [diagnosePendingId] = useState(() => {
     if (window.location.pathname !== "/diagnose/result") return null;
@@ -4305,7 +4774,7 @@ function App() {
 
   return (
     <LangCtx.Provider value={{ lang, setLang }}>
-      {(trackToken || diagnosePendingId) ? (
+      {(trackToken || outcomeToken || diagnosePendingId) ? (
         <>
           <header className="topbar" style={{ justifyContent: "space-between" }}>
             <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -4317,7 +4786,7 @@ function App() {
               style={{ fontSize: 11, fontWeight: 700, padding: "5px 11px", borderRadius: 6, border: "1px solid #dfe5e1", background: "transparent", color: "#69736e", cursor: "pointer", fontFamily: "inherit" }}
             >{lang === "es" ? "EN" : "ES"}</button>
           </header>
-          {trackToken ? <TrackPage token={trackToken} /> : <DiagnoseResultPage pendingId={diagnosePendingId} />}
+          {trackToken ? <TrackPage token={trackToken} /> : outcomeToken ? <OutcomeSurveyPage token={outcomeToken} /> : <DiagnoseResultPage pendingId={diagnosePendingId} />}
         </>
       ) : portal === "landing" && page === "home" ? (
         <>

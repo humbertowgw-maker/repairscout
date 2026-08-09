@@ -17,6 +17,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const openaiParseMock = vi.hoisted(() => vi.fn());
 const generateTextMock = vi.hoisted(() => vi.fn());
+const findConfirmedOutcomesMock = vi.hoisted(() => vi.fn());
+
+// database.js pulls in `pg`, which has no place in a unit test for prompt-building
+// logic — mocked the same way openai/ai are, so groundedOutcomesSection's DB dependency
+// never touches a real database or the local JSON-file fallback store.
+vi.mock("../server/database.js", () => ({
+  findConfirmedOutcomes: findConfirmedOutcomesMock,
+}));
 
 vi.mock("openai", () => ({
   // `openai` is imported and instantiated with `new OpenAI(...)`, so the
@@ -36,7 +44,7 @@ vi.mock("ai", () => ({
   jsonSchema: vi.fn((schema) => schema),
 }));
 
-const { diagnoseVehicle, getDiagnosisProviderStatus } = await import("../server/diagnosis.js");
+const { diagnoseVehicle, getDiagnosisProviderStatus, groundedCodesSection, groundedOutcomesSection } = await import("../server/diagnosis.js");
 
 const ALL_PROVIDER_ENV_KEYS = [
   "GROQ_API_KEY",
@@ -111,6 +119,9 @@ beforeEach(() => {
   // mock-restoring config to clear their call history and queued values.
   openaiParseMock.mockReset();
   generateTextMock.mockReset();
+  // Default to "no confirmed outcomes yet" — matches the real cold-start state and
+  // means existing tests that don't care about outcomes grounding aren't affected.
+  findConfirmedOutcomesMock.mockReset().mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -289,5 +300,112 @@ describe("diagnoseVehicle — response coercion through the shared schema", () =
     expect(result.safetyLevel).toBe("moderado"); // invalid level coerced to default
     expect(result.possibleCauses.length).toBeGreaterThan(0); // backfilled
     expect(result.estimate).toMatchObject({ low: 0, high: 0 });
+  });
+});
+
+describe("groundedCodesSection", () => {
+  it("returns an empty string when no codes are present anywhere", () => {
+    expect(groundedCodesSection({ description: "makes a strange noise", obdCodes: [] }, "en")).toBe("");
+  });
+
+  it("includes the verified definition for a known code from the structured field", () => {
+    const section = groundedCodesSection({ description: "check engine light", obdCodes: ["P0420"] }, "en");
+    expect(section).toContain("P0420");
+    expect(section).toContain("Catalyst System Efficiency Below Threshold");
+  });
+
+  it("also picks up a code typed directly into the free-text description", () => {
+    const section = groundedCodesSection({ description: "scanner showed P0301, misfiring", obdCodes: [] }, "en");
+    expect(section).toContain("P0301");
+    expect(section).toContain("Cylinder 1 Misfire Detected");
+  });
+
+  it("flags unrecognized codes explicitly instead of staying silent about them", () => {
+    const section = groundedCodesSection({ description: "code P1234 appeared", obdCodes: [] }, "en");
+    expect(section).toContain("P1234");
+    expect(section.toLowerCase()).toContain("manufacturer-specific");
+  });
+
+  it("writes the unknown-code note in Spanish when language is es", () => {
+    const section = groundedCodesSection({ description: "salió el código P1234", obdCodes: [] }, "es");
+    expect(section).toContain("específicos del fabricante");
+  });
+});
+
+describe("groundedOutcomesSection", () => {
+  it("returns empty string without a DB call when vehicle make/model are missing", async () => {
+    const section = await groundedOutcomesSection({ description: "brake noise", vehicle: {} }, "en");
+    expect(section).toBe("");
+    expect(findConfirmedOutcomesMock).not.toHaveBeenCalled();
+  });
+
+  it("returns empty string when no confirmed outcomes are found", async () => {
+    findConfirmedOutcomesMock.mockResolvedValue([]);
+    const section = await groundedOutcomesSection(
+      { description: "brake noise", vehicle: { make: "Honda", model: "Accord" } }, "en",
+    );
+    expect(section).toBe("");
+  });
+
+  it("formats confirmed outcomes into the prompt with vehicle, cause, and fix", async () => {
+    findConfirmedOutcomesMock.mockResolvedValue([
+      { vehicle: { year: "2018", make: "Honda", model: "Accord" }, causeTitle: "Worn front brake pads", fixDescription: "Replaced front brake pads", notes: "Squealing stopped immediately" },
+    ]);
+    const section = await groundedOutcomesSection(
+      { description: "squealing when braking", vehicle: { make: "Honda", model: "Accord" } }, "en",
+    );
+    expect(section).toContain("2018 Honda Accord");
+    expect(section).toContain("Worn front brake pads");
+    expect(section).toContain("Replaced front brake pads");
+    expect(section).toContain("Squealing stopped immediately");
+  });
+
+  it("passes the description's OBD codes and regex-derived keywords through to the lookup", async () => {
+    findConfirmedOutcomesMock.mockResolvedValue([]);
+    await groundedOutcomesSection(
+      { description: "brake squeal", obdCodes: ["P0420"], vehicle: { make: "Toyota", model: "Camry" } }, "en",
+    );
+    expect(findConfirmedOutcomesMock).toHaveBeenCalledWith(expect.objectContaining({
+      make: "Toyota", model: "Camry", obdCodes: ["P0420"], symptomKeywords: expect.arrayContaining(["brake"]),
+    }));
+  });
+
+  it("writes the Spanish intro line when language is es", async () => {
+    findConfirmedOutcomesMock.mockResolvedValue([
+      { vehicle: { make: "Honda", model: "Accord" }, causeTitle: "Pastillas desgastadas", fixDescription: "Reemplazo de pastillas" },
+    ]);
+    const section = await groundedOutcomesSection(
+      { description: "frenos", vehicle: { make: "Honda", model: "Accord" } }, "es",
+    );
+    expect(section).toContain("Reparaciones confirmadas");
+  });
+
+  it("propagates a DB failure to the caller rather than swallowing it silently — the call site in diagnoseVehicle is what's responsible for degrading gracefully", async () => {
+    findConfirmedOutcomesMock.mockRejectedValue(new Error("connection refused"));
+    await expect(
+      groundedOutcomesSection({ description: "brake noise", vehicle: { make: "Honda", model: "Accord" } }, "en"),
+    ).rejects.toThrow("connection refused");
+  });
+});
+
+describe("diagnoseVehicle — outcomes grounding integration", () => {
+  it("degrades silently when the outcomes lookup fails, and the diagnosis still succeeds", async () => {
+    vi.stubEnv("GROQ_API_KEY", "groq-key");
+    findConfirmedOutcomesMock.mockRejectedValue(new Error("connection refused"));
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true, status: 200,
+      json: async () => ({ choices: [{ message: { content: JSON.stringify(fullyValidDiagnosis({ summary: "still works" })) } }] }),
+    })));
+
+    const result = await diagnoseVehicle({
+      vehicle: { make: "Honda", model: "Accord", year: "2018" },
+      description: "brake noise",
+      mileage: "50000",
+      zip: "10001",
+      language: "en",
+    });
+
+    expect(result.source).toBe("groq");
+    expect(result.summary).toBe("still works");
   });
 });

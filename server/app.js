@@ -48,10 +48,21 @@ import {
   updateRepairStage,
   upsertPhoneVerification,
   upsertShopProfile,
+  createOutcomeSurvey,
+  getOutcomeByToken,
+  respondToOutcomeSurvey,
+  shopConfirmOutcome,
+  listOutcomesForReview,
+  adminReviewOutcome,
+  getGuideStats,
+  listOutcomesNeedingReminder,
+  markOutcomeReminderSent,
 } from "./database.js";
 import { diagnoseVehicle, getDiagnosisProviderStatus } from "./diagnosis.js";
+import { REPAIR_GUIDES } from "./repair-guides.js";
+import { lookupCodes } from "./obd-codes.js";
 import { buildQuoteFromDiagnosis } from "./parts.js";
-import { sendQuoteNotification, sendShopApprovalNotification, sendInvoiceNotification, sendStageUpdateNotification } from "./notify.js";
+import { sendQuoteNotification, sendShopApprovalNotification, sendInvoiceNotification, sendStageUpdateNotification, sendOutcomeReminderNotification } from "./notify.js";
 import { searchRepairShops } from "./shops.js";
 import { generateOtp, normalizePhone, otpConfigured, OTP_TTL_MS, sendOtpSms } from "./otp.js";
 import { constructWebhookEvent, createDiagnosisCheckout } from "./stripe.js";
@@ -625,6 +636,18 @@ app.patch("/api/quotes/:id/repair-stage", requireAuth, async (request, response)
   const updated = await updateRepairStage({ id: request.params.id, stage: parsed.data.stage });
   if (!updated) return response.status(404).json({ error: "No encontramos esa cotización." });
 
+  // On completion, seed a confirmed-fix outcome survey so we can ask "did this fix it?"
+  // in the same notification that already fires below — see repair_outcomes in database.js.
+  let surveyUrl = null;
+  if (parsed.data.stage === "Completed") {
+    try {
+      const outcome = await createOutcomeSurvey(updated);
+      surveyUrl = `${process.env.APP_URL || "https://repairscout.app"}/outcome/${outcome.surveyToken}`;
+    } catch (e) {
+      console.error("[outcome-survey] failed to create:", e.message);
+    }
+  }
+
   // Notify customer of stage change (fire-and-forget)
   if (updated.customerEmail || updated.customerPhone) {
     const veh = updated.vehicle || {};
@@ -636,10 +659,82 @@ app.patch("/api/quotes/:id/repair-stage", requireAuth, async (request, response)
       vehicle: vehicleStr,
       stage: parsed.data.stage,
       trackUrl: `${process.env.APP_URL || "https://repairscout.app"}/track/${updated.token}`,
+      surveyUrl,
     }).catch((e) => console.error("[stage-notify]", e.message));
   }
 
   response.json({ quote: updated });
+});
+
+// ── Repair guide real-world confirmed-cost stats (public, read-only, no PII) ──
+
+app.get("/api/guides/:id/stats", async (request, response) => {
+  if (!REPAIR_GUIDES[request.params.id]) return response.status(404).json({ error: "Guía no encontrada." });
+  const stats = await getGuideStats(request.params.id).catch(() => ({ count: 0, costCount: 0, costLow: null, costHigh: null, costMedian: null, sampleFixes: [] }));
+  response.json({ stats });
+});
+
+// ── Confirmed-fix outcome survey (public, token-gated) ─────────────────────
+
+app.get("/api/outcomes/:token", async (request, response) => {
+  const outcome = await getOutcomeByToken(request.params.token).catch(() => null);
+  if (!outcome) return response.status(404).json({ error: "Encuesta no encontrada." });
+  response.json({ outcome });
+});
+
+const outcomeResponseInput = z.object({
+  worked: z.boolean(),
+  notes: z.string().max(2000).optional(),
+  costActual: z.number().nonnegative().optional(),
+});
+
+app.post("/api/outcomes/:token/respond", async (request, response) => {
+  const parsed = outcomeResponseInput.safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: "Respuesta no válida." });
+  const outcome = await respondToOutcomeSurvey(request.params.token, parsed.data);
+  if (!outcome) return response.status(404).json({ error: "Encuesta no encontrada." });
+  response.json({ outcome });
+});
+
+// ── Shop confirms an outcome (moderation step 1 of 2 before it's trusted) ──
+
+app.patch("/api/quotes/:id/outcome", requireAuth, async (request, response) => {
+  if (request.user.role !== "shop") {
+    return response.status(403).json({ error: "Solo el taller puede confirmar el resultado." });
+  }
+  const ownerCheckOutcome = await getItemizedQuoteById(request.params.id).catch(() => null);
+  if (!ownerCheckOutcome) return response.status(404).json({ error: "Cotización no encontrada." });
+  if (ownerCheckOutcome.userId !== request.user.id) return response.status(403).json({ error: "Acceso no autorizado." });
+
+  const outcomes = await listOutcomesForReview({}).catch(() => []);
+  const outcome = outcomes.find((o) => o.itemizedQuoteId === request.params.id);
+  if (!outcome) return response.status(404).json({ error: "No hay encuesta de resultado para esta cotización." });
+
+  const confirmed = await shopConfirmOutcome(outcome.id);
+  response.json({ outcome: confirmed });
+});
+
+// ── Admin: review outcomes (moderation step 2 — the SureTrack-style editorial gate) ──
+
+app.get("/api/admin/outcomes", requireAuth, requireAdmin, async (request, response) => {
+  const tier = request.query.tier;
+  const outcomes = await listOutcomesForReview(tier ? { tier } : {});
+  response.json({ outcomes });
+});
+
+const adminReviewInput = z.object({
+  approve: z.boolean(),
+  // Validated against real guide IDs rather than a free-text field, so an admin can't
+  // typo a category that will never match anything in the guide library on the frontend.
+  guideCategory: z.enum(Object.keys(REPAIR_GUIDES)).optional(),
+});
+
+app.patch("/api/admin/outcomes/:id/review", requireAuth, requireAdmin, async (request, response) => {
+  const parsed = adminReviewInput.safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: "Datos de revisión no válidos." });
+  const outcome = await adminReviewOutcome(request.params.id, request.user.id, parsed.data);
+  if (!outcome) return response.status(404).json({ error: "Resultado no encontrado." });
+  response.json({ outcome });
 });
 
 // ── Cron: check tracking status 3x/day ───────────────────────────────────
@@ -663,6 +758,44 @@ app.get("/api/cron/check-tracking", async (request, response) => {
     results.push({ id: q.id, tracking: q.trackingNumber, status: "checked" });
   }
   response.json({ checked: results.length, results });
+});
+
+// ── Cron: nudge unanswered confirmed-fix surveys once/day ─────────────────
+// Nobody is forced to open the "did this fix it?" link sent on completion — this
+// sends exactly one reminder per outcome, 48h after the original survey, to the
+// customers who never responded. Real crowd-sourced fix data is the entire point of
+// the confirmed-outcomes feature, so leaving this reminder unsent was leaving data on
+// the table.
+
+app.get("/api/cron/nudge-outcome-surveys", async (request, response) => {
+  const authHeader = request.headers["authorization"] || "";
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+    return response.status(401).json({ error: "Unauthorized." });
+  }
+  const pending = await listOutcomesNeedingReminder({ olderThanHours: 48 }).catch(() => []);
+  const results = [];
+  for (const outcome of pending) {
+    const quote = await getItemizedQuoteById(outcome.itemizedQuoteId).catch(() => null);
+    if (!quote || (!quote.customerEmail && !quote.customerPhone)) {
+      await markOutcomeReminderSent(outcome.id).catch(() => {});
+      results.push({ id: outcome.id, sent: false, reason: "no contact info" });
+      continue;
+    }
+    const veh = outcome.vehicle || {};
+    const vehicleStr = [veh.year, veh.make, veh.model].filter(Boolean).join(" ") || "Vehicle";
+    const surveyUrl = `${process.env.APP_URL || "https://repairscout.app"}/outcome/${outcome.surveyToken}`;
+    await sendOutcomeReminderNotification({
+      customerEmail: quote.customerEmail,
+      customerPhone: quote.customerPhone,
+      customerName: quote.customerName,
+      vehicle: vehicleStr,
+      surveyUrl,
+    }).catch((e) => console.error("[cron/outcome-reminder]", e.message));
+    await markOutcomeReminderSent(outcome.id).catch(() => {});
+    results.push({ id: outcome.id, sent: true });
+  }
+  response.json({ nudged: results.length, results });
 });
 
 // ── OTP: send code ────────────────────────────────────────────────────────────
@@ -767,6 +900,7 @@ const freeDiagInput = z.object({
   vehicle: z.record(z.string(), z.any()).optional(),
   mileage: z.string().max(30).optional(),
   description: z.string().min(8).max(2000),
+  obdCodes: z.array(z.string()).max(10).optional(),
   zip: z.string().min(5).max(10),
   language: z.string().max(5).optional(),
 });
@@ -775,7 +909,7 @@ app.post("/api/diagnose/free", limiter(15 * 60 * 1000, 30), async (request, resp
   const parsed = freeDiagInput.safeParse(request.body);
   if (!parsed.success) return response.status(400).json({ error: "Faltan datos para el diagnóstico." });
 
-  const { phone, vehicle, mileage, description, zip, language } = parsed.data;
+  const { phone, vehicle, mileage, description, obdCodes, zip, language } = parsed.data;
   const normalizedPhone = normalizePhone(phone);
 
   const verification = await getPhoneVerification(normalizedPhone);
@@ -784,7 +918,7 @@ app.post("/api/diagnose/free", limiter(15 * 60 * 1000, 30), async (request, resp
 
   try {
     await markPhoneUsedFree(normalizedPhone);
-    const result = await diagnoseVehicle({ vehicle: vehicle || {}, mileage, description, zip, language: language || "es" });
+    const result = await diagnoseVehicle({ vehicle: vehicle || {}, mileage, description, obdCodes, zip, language: language || "es" });
     await saveDiagnosis({ id: crypto.randomUUID(), userId: request.user?.id || null, vehicle: vehicle || {}, description, zip, result, createdAt: new Date().toISOString() });
     return response.json({ result, free: true });
   } catch (e) {
@@ -842,6 +976,18 @@ app.get("/api/diagnose/result/:id", async (request, response) => {
   if (!pending.paid) return response.status(402).json({ error: "Pago pendiente.", pending: true });
   if (!pending.result) return response.json({ ready: false, paid: true });
   return response.json({ ready: true, paid: true, result: pending.result, vehicle: pending.vehicle });
+});
+
+// ── OBD-II code lookup (used right after a Bluetooth scan, before submitting) ─
+
+app.get("/api/obd/lookup", (request, response) => {
+  const codes = String(request.query.codes || "")
+    .split(",")
+    .map((c) => c.trim())
+    .filter(Boolean);
+  if (!codes.length) return response.status(400).json({ error: "No codes provided." });
+  const { found, unknown } = lookupCodes(codes);
+  return response.json({ found, unknown });
 });
 
 // ── Parts search (AI-generated local + online results) ────────────────────────

@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 320" width="480" height="320" role="img" aria-labelledby="wiperTitle">
+  <title id="wiperTitle">Wiper arm and blade lifted off the windshield</title>
+  <rect width="480" height="320" fill="#0d1829" rx="12"/>
+
+  <!-- Windshield edge -->
+  <path d="M 40 260 Q 240 220 440 260 L 440 290 Q 240 250 40 290 Z" fill="#1e293b" stroke="#475569" stroke-width="2"/>
+
+  <!-- Wiper arm (raised, pivoting from bottom) -->
+  <line x1="240" y1="270" x2="200" y2="110" stroke="#64748b" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="240" cy="270" r="10" fill="#334155" stroke="#475569" stroke-width="2"/>
+
+  <!-- Blade -->
+  <rect x="110" y="95" width="180" height="16" rx="8" fill="#1e293b" stroke="#f97316" stroke-width="3" transform="rotate(-8 200 103)"/>
+
+  <!-- Release tab -->
+  <rect x="188" y="98" width="20" height="14" rx="3" fill="#fbbf24" transform="rotate(-8 198 105)"/>
+
+  <g font-family="system-ui, sans-serif" font-size="13" fill="#e2e8f0">
+    <text x="60" y="70">Blade</text>
+    <line x1="90" y1="65" x2="130" y2="95" stroke="#94a3b8" stroke-width="1.5"/>
+
+    <text x="330" y="90">Release tab</text>
+    <line x1="325" y1="85" x2="215" y2="98" stroke="#94a3b8" stroke-width="1.5"/>
+
+    <text x="330" y="180">Arm</text>
+    <line x1="325" y1="175" x2="222" y2="190" stroke="#94a3b8" stroke-width="1.5"/>
+  </g>
+</svg>

@@ -1,5 +1,7 @@
 import pg from "pg";
+import crypto from "node:crypto";
 import { readStore, updateStore } from "./store.js";
+import { matchGuideForCause } from "./repair-guides.js";
 
 const { Pool } = pg;
 const pool = process.env.DATABASE_URL
@@ -233,6 +235,36 @@ async function ensureDatabase() {
     );
 
     create index if not exists parts_inquiries_batch_id on parts_inquiries(batch_id);
+
+    create table if not exists repair_outcomes (
+      id uuid primary key,
+      itemized_quote_id uuid references itemized_quotes(id) on delete cascade,
+      vehicle jsonb not null default '{}'::jsonb,
+      symptom_description text not null default '',
+      cause_title text not null default '',
+      fix_description text not null default '',
+      obd_codes text[] not null default '{}',
+      guide_category text,
+      cost_actual numeric(10,2),
+      worked boolean,
+      notes text,
+      reported_by text not null default 'customer' check (reported_by in ('customer', 'shop')),
+      survey_token text unique,
+      survey_sent_at timestamptz,
+      reminder_sent_at timestamptz,
+      self_reported_at timestamptz,
+      shop_confirmed boolean not null default false,
+      shop_confirmed_at timestamptz,
+      admin_reviewed boolean not null default false,
+      admin_reviewed_at timestamptz,
+      admin_reviewer_id uuid references users(id) on delete set null,
+      trust_tier text not null default 'unconfirmed'
+        check (trust_tier in ('unconfirmed', 'shop_confirmed', 'admin_reviewed', 'rejected')),
+      created_at timestamptz not null default now()
+    );
+
+    create index if not exists repair_outcomes_quote_id on repair_outcomes(itemized_quote_id);
+    create index if not exists repair_outcomes_trust_tier on repair_outcomes(trust_tier);
   `);
 
   for (const plan of DEFAULT_PLANS) {
@@ -951,6 +983,9 @@ export async function workOrderMigrate() {
       add column if not exists shop_notified_at timestamptz,
       add column if not exists payment_status text default 'unpaid',
       add column if not exists payment_amount numeric(10,2);
+
+    alter table repair_outcomes
+      add column if not exists reminder_sent_at timestamptz;
   `);
 }
 
@@ -1138,4 +1173,347 @@ export async function getAdminStats() {
     approvedQuotes: (store.itemizedQuotes || []).filter((q) => q.customerApproved).length,
     shopProfiles: (store.shopProfiles || []).length,
   };
+}
+
+function mapOutcomeRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    itemizedQuoteId: row.itemized_quote_id,
+    vehicle: row.vehicle || {},
+    symptomDescription: row.symptom_description || "",
+    causeTitle: row.cause_title || "",
+    fixDescription: row.fix_description || "",
+    obdCodes: row.obd_codes || [],
+    guideCategory: row.guide_category || null,
+    costActual: row.cost_actual != null ? Number(row.cost_actual) : null,
+    worked: row.worked,
+    notes: row.notes || null,
+    reportedBy: row.reported_by,
+    surveyToken: row.survey_token,
+    surveySentAt: row.survey_sent_at,
+    reminderSentAt: row.reminder_sent_at,
+    selfReportedAt: row.self_reported_at,
+    shopConfirmed: row.shop_confirmed,
+    shopConfirmedAt: row.shop_confirmed_at,
+    adminReviewed: row.admin_reviewed,
+    adminReviewedAt: row.admin_reviewed_at,
+    adminReviewerId: row.admin_reviewer_id,
+    trustTier: row.trust_tier,
+    createdAt: row.created_at,
+  };
+}
+
+/**
+ * Seeds a repair_outcomes row from an already-loaded itemized quote (the caller
+ * already has it, from updateRepairStage's return value — no need to re-fetch).
+ * There's no FK from itemized_quotes back to the original diagnoses row (the AI
+ * diagnosis JSON is copy-pasted into itemized_quotes.diagnosis at quote-send time),
+ * so this seeds directly from that duplicated jsonb rather than trying to look up
+ * the original diagnosis.
+ */
+export async function createOutcomeSurvey(quote) {
+  const id = crypto.randomUUID();
+  const surveyToken = crypto.randomBytes(20).toString("hex");
+  const now = new Date().toISOString();
+  const firstCause = quote.diagnosis?.possibleCauses?.[0] || {};
+  const fixDescription = quote.diagnosis?.estimate?.repairLabel || "";
+  // Best-guess auto-tag from the same regex used to surface guides on the diagnosis
+  // itself — admin review can still override this via adminReviewOutcome, but most
+  // outcomes never get manually reviewed, so an unset guide_category would mean most
+  // confirmed fixes never feed back into the guide UI's "confirmed by N repairs" stat.
+  const guideCategory = matchGuideForCause({ title: firstCause.title, reason: fixDescription, guideCategory: firstCause.guideCategory })?.id || null;
+
+  const record = {
+    id,
+    itemizedQuoteId: quote.id,
+    vehicle: quote.vehicle || {},
+    symptomDescription: quote.diagnosis?.summary || "",
+    causeTitle: firstCause.title || "",
+    fixDescription,
+    obdCodes: quote.diagnosis?.obdCodes || [],
+    guideCategory,
+    surveyToken,
+    surveySentAt: now,
+  };
+
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query(
+      `insert into repair_outcomes
+        (id, itemized_quote_id, vehicle, symptom_description, cause_title, fix_description, obd_codes, guide_category, survey_token, survey_sent_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       returning *`,
+      [
+        record.id,
+        record.itemizedQuoteId,
+        record.vehicle,
+        record.symptomDescription,
+        record.causeTitle,
+        record.fixDescription,
+        record.obdCodes,
+        record.guideCategory,
+        record.surveyToken,
+        record.surveySentAt,
+      ],
+    );
+    return mapOutcomeRow(result.rows[0]);
+  }
+
+  const stored = {
+    ...record,
+    reportedBy: "customer",
+    trustTier: "unconfirmed",
+    shopConfirmed: false,
+    adminReviewed: false,
+    createdAt: now,
+  };
+  await updateStore((store) => ({
+    ...store,
+    repairOutcomes: [...(store.repairOutcomes || []), stored],
+  }));
+  return stored;
+}
+
+export async function getOutcomeByToken(token) {
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query("select * from repair_outcomes where survey_token = $1 limit 1", [token]);
+    return mapOutcomeRow(result.rows[0]);
+  }
+  const store = await readStore();
+  return (store.repairOutcomes || []).find((o) => o.surveyToken === token) || null;
+}
+
+export async function respondToOutcomeSurvey(token, { worked, notes, costActual }) {
+  const now = new Date().toISOString();
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query(
+      `update repair_outcomes
+       set worked = $2, notes = $3, cost_actual = $4, self_reported_at = $5
+       where survey_token = $1
+       returning *`,
+      [token, worked, notes || null, costActual ?? null, now],
+    );
+    return mapOutcomeRow(result.rows[0]);
+  }
+  let updated = null;
+  await updateStore((store) => ({
+    ...store,
+    repairOutcomes: (store.repairOutcomes || []).map((o) => {
+      if (o.surveyToken !== token) return o;
+      updated = { ...o, worked, notes: notes || null, costActual: costActual ?? null, selfReportedAt: now };
+      return updated;
+    }),
+  }));
+  return updated;
+}
+
+/** Ownership is checked by the caller (route layer), same convention as setTrackingInfo. */
+export async function shopConfirmOutcome(id) {
+  const now = new Date().toISOString();
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query(
+      `update repair_outcomes
+       set reported_by = 'shop', shop_confirmed = true, shop_confirmed_at = $2, trust_tier = 'shop_confirmed'
+       where id = $1
+       returning *`,
+      [id, now],
+    );
+    return mapOutcomeRow(result.rows[0]);
+  }
+  let updated = null;
+  await updateStore((store) => ({
+    ...store,
+    repairOutcomes: (store.repairOutcomes || []).map((o) => {
+      if (o.id !== id) return o;
+      updated = { ...o, reportedBy: "shop", shopConfirmed: true, shopConfirmedAt: now, trustTier: "shop_confirmed" };
+      return updated;
+    }),
+  }));
+  return updated;
+}
+
+export async function listOutcomesForReview({ tier } = {}) {
+  if (pool) {
+    await ensureDatabase();
+    const values = [];
+    let where = "";
+    if (tier) { values.push(tier); where = "where trust_tier = $1"; }
+    const result = await pool.query(
+      `select * from repair_outcomes ${where} order by created_at desc limit 200`,
+      values,
+    );
+    return result.rows.map(mapOutcomeRow);
+  }
+  const store = await readStore();
+  const all = store.repairOutcomes || [];
+  return tier ? all.filter((o) => o.trustTier === tier) : all;
+}
+
+export async function adminReviewOutcome(id, adminUserId, { approve, guideCategory }) {
+  const now = new Date().toISOString();
+  const trustTier = approve ? "admin_reviewed" : "rejected";
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query(
+      `update repair_outcomes
+       set admin_reviewed = true, admin_reviewed_at = $2, admin_reviewer_id = $3, trust_tier = $4,
+           guide_category = coalesce($5, guide_category)
+       where id = $1
+       returning *`,
+      [id, now, adminUserId, trustTier, guideCategory || null],
+    );
+    return mapOutcomeRow(result.rows[0]);
+  }
+  let updated = null;
+  await updateStore((store) => ({
+    ...store,
+    repairOutcomes: (store.repairOutcomes || []).map((o) => {
+      if (o.id !== id) return o;
+      updated = {
+        ...o,
+        adminReviewed: true,
+        adminReviewedAt: now,
+        adminReviewerId: adminUserId,
+        trustTier,
+        guideCategory: guideCategory || o.guideCategory || null,
+      };
+      return updated;
+    }),
+  }));
+  return updated;
+}
+
+/**
+ * Confirmed-fix lookup used to ground AI diagnoses (see diagnosis.js's
+ * groundedOutcomesSection). Only trust_tier values that survived either shop or
+ * admin confirmation are eligible — raw unconfirmed self-reports never feed back
+ * into future diagnoses, matching Mitchell1 SureTrack's editorial-curation model
+ * rather than treating every user report as ground truth.
+ */
+export async function findConfirmedOutcomes({ make, model, symptomKeywords = [], obdCodes = [], limit = 3 }) {
+  if (!make || !model) return [];
+  if (pool) {
+    await ensureDatabase();
+    const likePatterns = symptomKeywords.length ? symptomKeywords.map((k) => `%${k}%`) : ["%__no_match__%"];
+    const result = await pool.query(
+      `select * from repair_outcomes
+       where trust_tier in ('shop_confirmed', 'admin_reviewed')
+         and worked = true
+         and vehicle->>'make' ilike $1
+         and vehicle->>'model' ilike $2
+         and (
+           exists (select 1 from unnest($3::text[]) k where cause_title ilike k or symptom_description ilike k)
+           or (obd_codes && $4::text[])
+         )
+       order by (trust_tier = 'admin_reviewed') desc, created_at desc
+       limit $5`,
+      [make, model, likePatterns, obdCodes, limit],
+    );
+    return result.rows.map(mapOutcomeRow);
+  }
+  const store = await readStore();
+  const kwLower = symptomKeywords.map((k) => k.toLowerCase());
+  return (store.repairOutcomes || [])
+    .filter((o) =>
+      (o.trustTier === "shop_confirmed" || o.trustTier === "admin_reviewed") &&
+      o.worked === true &&
+      String(o.vehicle?.make || "").toLowerCase() === String(make).toLowerCase() &&
+      String(o.vehicle?.model || "").toLowerCase() === String(model).toLowerCase() &&
+      (
+        kwLower.some((k) => o.causeTitle.toLowerCase().includes(k) || o.symptomDescription.toLowerCase().includes(k)) ||
+        (obdCodes.length && o.obdCodes.some((c) => obdCodes.includes(c)))
+      )
+    )
+    .sort((a, b) => (b.trustTier === "admin_reviewed") - (a.trustTier === "admin_reviewed"))
+    .slice(0, limit);
+}
+
+function summarizeGuideOutcomes(rows) {
+  const costs = rows.map((o) => o.costActual).filter((c) => c != null).sort((a, b) => a - b);
+  const mid = Math.floor(costs.length / 2);
+  return {
+    count: rows.length,
+    costCount: costs.length,
+    costLow: costs.length ? costs[0] : null,
+    costHigh: costs.length ? costs[costs.length - 1] : null,
+    costMedian: costs.length ? (costs.length % 2 ? costs[mid] : Math.round((costs[mid - 1] + costs[mid]) / 2)) : null,
+    sampleFixes: [...new Set(rows.map((o) => o.fixDescription).filter(Boolean))].slice(0, 3),
+  };
+}
+
+/**
+ * Real-world stats for a repair guide category, drawn only from confirmed outcomes
+ * (shop-confirmed or admin-reviewed, worked = true) — this is the actual "confirmed by
+ * N real repairs" payoff the repair_outcomes.guide_category column exists for. Returns
+ * count: 0 (not null) when there's no confirmed data yet, so callers can render an
+ * honest "not yet confirmed" state instead of erroring.
+ */
+export async function getGuideStats(guideId) {
+  if (!guideId) return { count: 0, costCount: 0, costLow: null, costHigh: null, costMedian: null, sampleFixes: [] };
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query(
+      `select * from repair_outcomes
+       where guide_category = $1 and trust_tier in ('shop_confirmed', 'admin_reviewed') and worked = true`,
+      [guideId],
+    );
+    return summarizeGuideOutcomes(result.rows.map(mapOutcomeRow));
+  }
+  const store = await readStore();
+  const rows = (store.repairOutcomes || []).filter(
+    (o) => o.guideCategory === guideId && (o.trustTier === "shop_confirmed" || o.trustTier === "admin_reviewed") && o.worked === true,
+  );
+  return summarizeGuideOutcomes(rows);
+}
+
+/**
+ * Outcomes whose survey went out a while ago but nobody ever responded — the gap
+ * flagged in the original plan ("nothing forces a customer to open the survey link").
+ * Only ever nudges once (reminder_sent_at is set right after, by markOutcomeReminderSent)
+ * so this is safe to run daily without spamming anyone.
+ */
+export async function listOutcomesNeedingReminder({ olderThanHours = 48 } = {}) {
+  const cutoff = new Date(Date.now() - olderThanHours * 60 * 60 * 1000).toISOString();
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query(
+      `select * from repair_outcomes
+       where survey_sent_at is not null
+         and survey_sent_at < $1
+         and self_reported_at is null
+         and reminder_sent_at is null`,
+      [cutoff],
+    );
+    return result.rows.map(mapOutcomeRow);
+  }
+  const store = await readStore();
+  return (store.repairOutcomes || []).filter(
+    (o) => o.surveySentAt && o.surveySentAt < cutoff && !o.selfReportedAt && !o.reminderSentAt,
+  );
+}
+
+export async function markOutcomeReminderSent(id) {
+  const now = new Date().toISOString();
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query(
+      "update repair_outcomes set reminder_sent_at = $2 where id = $1 returning *",
+      [id, now],
+    );
+    return mapOutcomeRow(result.rows[0]);
+  }
+  let updated = null;
+  await updateStore((store) => ({
+    ...store,
+    repairOutcomes: (store.repairOutcomes || []).map((o) => {
+      if (o.id !== id) return o;
+      updated = { ...o, reminderSentAt: now };
+      return updated;
+    }),
+  }));
+  return updated;
 }

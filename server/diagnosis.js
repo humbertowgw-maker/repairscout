@@ -2,6 +2,11 @@ import OpenAI from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
 import { generateText, Output, jsonSchema } from "ai";
 import { z } from "zod";
+import { extractCodesFromText, lookupCodes } from "./obd-codes.js";
+import { findConfirmedOutcomes } from "./database.js";
+import { REPAIR_GUIDES } from "./repair-guides.js";
+
+const REPAIR_GUIDE_IDS = Object.keys(REPAIR_GUIDES);
 
 const ScenarioSchema = z.object({
   scenario: z.string(),
@@ -22,6 +27,12 @@ const DiagnosisSchema = z.object({
       test: z.string(),
       urgency: z.string(),
       tone: z.enum(["danger", "warn", "neutral"]),
+      // Lets the AI point straight at a known step-by-step repair guide instead of
+      // relying on matchGuideForCause's regex over free-form title/reason text, which
+      // misses plenty of real phrasing. .nullable() alongside .optional() for the same
+      // reason bestCase/worstCase need it above — OpenAI structured outputs reject an
+      // optional field that isn't also nullable.
+      guideCategory: z.enum(REPAIR_GUIDE_IDS).nullable().optional(),
     }),
   ).min(1).max(4),
   estimate: z.object({
@@ -98,11 +109,96 @@ function preferredProvider(input) {
     return "gemini";
   }
 
-  if (/(obd|p\d{4}|código|code|sensor|eléctric|electric|alternador|check engine|luz del motor)/.test(symptoms)) {
-    return "openrouter";
-  }
+  // Previously routed OBD-code-related queries to OpenRouter's free tier — the weakest
+  // model in the chain, for exactly the kind of query that most needs to get a specific
+  // technical fact right. Grounding the prompt with verified code definitions (see
+  // groundedCodesSection below) matters more here than which model handles it, so this
+  // no longer special-cases code-related queries into a weaker provider.
 
   return "groq";
+}
+
+/**
+ * Look up any OBD-II codes the user provided (either the structured obdCodes field or
+ * codes typed directly into the free-text description) against the generic-code
+ * dictionary, and build a section for the prompt that gives the model verified ground
+ * truth instead of relying on its own recall — recall is exactly what was producing
+ * wrong answers before.
+ */
+export function groundedCodesSection(input, language) {
+  const isEn = language === "en";
+  const candidates = [
+    ...(input.obdCodes || []),
+    ...extractCodesFromText(input.description),
+  ];
+  if (candidates.length === 0) return "";
+
+  const { found, unknown } = lookupCodes(candidates);
+  const lines = [];
+
+  if (Object.keys(found).length > 0) {
+    lines.push(isEn ? "Verified OBD-II code definitions (use these exact definitions, do not guess a different meaning):" : "Definiciones verificadas de códigos OBD-II (usa exactamente estas definiciones, no adivines un significado distinto):");
+    for (const [code, meaning] of Object.entries(found)) {
+      lines.push(`- ${code}: ${meaning}`);
+    }
+  }
+
+  if (unknown.length > 0) {
+    lines.push(
+      isEn
+        ? `The following codes were provided but are not in the verified generic-code dataset (likely manufacturer-specific): ${unknown.join(", ")}. Say explicitly that these need to be looked up against the vehicle manufacturer's specific code list rather than guessing a definition.`
+        : `Los siguientes códigos fueron proporcionados pero no están en el conjunto de códigos genéricos verificados (probablemente específicos del fabricante): ${unknown.join(", ")}. Indica explícitamente que deben buscarse en la lista de códigos específica del fabricante en lugar de adivinar una definición.`
+    );
+  }
+
+  return lines.length ? `\n\n${lines.join("\n")}` : "";
+}
+
+// Same symptom categories fallbackDiagnosis() already hand-recognizes below (brake,
+// starting) — kept intentionally small rather than trying to cover every possible
+// symptom, since these keywords drive an ILIKE match against real repair_outcomes rows,
+// not free-form NLP.
+function extractSymptomKeywords(description) {
+  const normalized = String(description || "").toLowerCase();
+  const keywords = [];
+  if (/(fren|brake|rechin|grind|pastilla|pad)/.test(normalized)) keywords.push("brake", "freno", "brake pad", "pastilla");
+  if (/(no enciende|no arranca|won't start|bater)/.test(normalized)) keywords.push("start", "arranque", "battery", "bateria");
+  return keywords;
+}
+
+/**
+ * Grounds the AI prompt with real, admin/shop-confirmed repair outcomes from similar
+ * vehicles — the actual differentiator this exists for: RepairScout's own growing record
+ * of what really worked, not scraped content. Mirrors groundedCodesSection's shape
+ * exactly (look up verified facts, format a labeled block) but needs a DB round-trip, so
+ * every caller must await it and the call site already wraps it in .catch(() => "") —
+ * a database hiccup must never fail a diagnosis, it should just mean less grounding.
+ */
+export async function groundedOutcomesSection(input, language) {
+  const vehicle = input.vehicle || {};
+  if (!vehicle.make || !vehicle.model) return "";
+
+  const isEn = language === "en";
+  const keywords = extractSymptomKeywords(input.description);
+  const outcomes = await findConfirmedOutcomes({
+    make: vehicle.make,
+    model: vehicle.model,
+    symptomKeywords: keywords,
+    obdCodes: input.obdCodes || [],
+    limit: 3,
+  });
+  if (!outcomes.length) return "";
+
+  const lines = [
+    isEn
+      ? `Confirmed fixes from real RepairScout repairs on similar vehicles (verified by the repair shop or reviewed by RepairScout — use these as real evidence, not just a suggestion):`
+      : `Reparaciones confirmadas de casos reales de RepairScout en vehículos similares (verificadas por el taller o revisadas por RepairScout — úsalas como evidencia real, no solo como sugerencia):`,
+  ];
+  for (const o of outcomes) {
+    const veh = [o.vehicle?.year, o.vehicle?.make, o.vehicle?.model].filter(Boolean).join(" ");
+    lines.push(`- ${veh}: "${o.causeTitle}" → ${o.fixDescription || (isEn ? "fix not recorded" : "reparación no registrada")}${o.notes ? ` (${o.notes})` : ""}`);
+  }
+  return `\n\n${lines.join("\n")}`;
 }
 
 function orderedProviders(input) {
@@ -151,6 +247,11 @@ function extractJson(text, language = "es") {
       test: String(cause?.test || (isEn ? "Inspect and test the related system." : "Realizar inspección y pruebas del sistema relacionado.")),
       urgency: String(cause?.urgency || (isEn ? "Verify" : "Verificar")),
       tone: tones.includes(cause?.tone) ? cause.tone : "neutral",
+      // Never trust the raw string as a valid id — text-JSON providers (Groq, Gemini,
+      // OpenRouter) aren't schema-enforced like the OpenAI/Gateway paths, so a
+      // hallucinated or outdated id must fall back to null (and matchGuideForCause's
+      // regex) rather than crash a lookup downstream.
+      guideCategory: REPAIR_GUIDE_IDS.includes(cause?.guideCategory) ? cause.guideCategory : null,
     })),
     estimate: {
       low: number(estimate.low),
@@ -221,7 +322,7 @@ Return only valid JSON, no Markdown. Use exactly this structure:
   "summary": "string",
   "safetyLevel": "bajo|moderado|alto|crítico",
   "safetyMessage": "string",
-  "possibleCauses": [{"probability": 1, "title": "string", "reason": "string — explain WHY this is likely in 2-3 sentences with specific technical detail", "test": "string — specific diagnostic test or measurement to confirm/rule out", "urgency": "string", "tone": "danger|warn|neutral"}],
+  "possibleCauses": [{"probability": 1, "title": "string", "reason": "string — explain WHY this is likely in 2-3 sentences with specific technical detail", "test": "string — specific diagnostic test or measurement to confirm/rule out", "urgency": "string", "tone": "danger|warn|neutral", "guideCategory": "string or null — one of the fixed ids below if a step-by-step guide exists for this exact repair, else null"}],
   "estimate": {"low": 0, "high": 0, "partsLow": 0, "partsHigh": 0, "laborLow": 0, "laborHigh": 0, "laborHoursLow": 0, "laborHoursHigh": 0, "confidence": "Baja|Media|Alta", "repairLabel": "string"},
   "bestCase": {"scenario": "string — the mildest/cheapest likely repair", "estimatedCost": "$X–$Y", "outcome": "string — what gets resolved", "timeframe": "string — e.g. same day"},
   "worstCase": {"scenario": "string — the most extensive repair needed if all related components failed", "estimatedCost": "$X–$Y", "outcome": "string — what could happen if ignored", "timeframe": "string — e.g. 2-3 days"},
@@ -229,6 +330,7 @@ Return only valid JSON, no Markdown. Use exactly this structure:
 }
 IMPORTANT: safetyLevel must always be one of: bajo, moderado, alto, crítico (these are fixed codes, not translated).
 IMPORTANT: confidence must always be one of: Baja, Media, Alta (fixed codes, not translated).
+IMPORTANT: guideCategory must be exactly one of these fixed ids (never invent a new one) or null: ${REPAIR_GUIDE_IDS.join(", ")}.
 possibleCauses reason fields must be detailed and explain the technical connection between symptoms and the cause.
 questions must be targeted follow-up questions that would meaningfully narrow down the diagnosis.
 All other text fields must be written in the language specified in the system prompt.`;
@@ -422,6 +524,7 @@ function fallbackDiagnosis(description, language = "es") {
           test: en ? "Measure resting voltage and voltage during the start attempt." : "Medir el voltaje en reposo y durante el intento de arranque.",
           urgency: en ? "Check first" : "Revisar primero",
           tone: "warn",
+          guideCategory: "battery-and-terminals",
         },
         {
           probability: 38,
@@ -430,6 +533,7 @@ function fallbackDiagnosis(description, language = "es") {
           test: en ? "Inspect terminals, grounds, and voltage drop across cables." : "Inspeccionar terminales, tierras y caída de voltaje en los cables.",
           urgency: en ? "Verify" : "Verificar",
           tone: "neutral",
+          guideCategory: "battery-and-terminals",
         },
       ],
       estimate: {
@@ -461,6 +565,7 @@ function fallbackDiagnosis(description, language = "es") {
           test: en ? "Inspect pad thickness and rotor surface condition." : "Inspeccionar el grosor de las pastillas y la superficie de los rotores.",
           urgency: en ? "Don't delay" : "No lo pospongas",
           tone: "danger",
+          guideCategory: "front-brake-pads",
         },
         {
           probability: 54,
@@ -469,6 +574,7 @@ function fallbackDiagnosis(description, language = "es") {
           test: en ? "Measure rotor thickness and lateral runout." : "Medir el grosor y la desviación lateral de los rotores.",
           urgency: en ? "Inspect today" : "Inspeccionar hoy",
           tone: "warn",
+          guideCategory: "front-brake-pads",
         },
         {
           probability: 21,
@@ -477,6 +583,7 @@ function fallbackDiagnosis(description, language = "es") {
           test: en ? "Lift the vehicle and check for wheel play and bearing noise." : "Elevar el vehículo y revisar juego y ruido en la rueda.",
           urgency: en ? "Rule out" : "Descartar",
           tone: "neutral",
+          guideCategory: "wheel-bearing",
         },
       ],
       estimate: {
@@ -526,7 +633,7 @@ export async function diagnoseVehicle(input) {
   const language = input.language === "en" ? "en" : "es";
   const langLabel = language === "en" ? "English" : "Spanish";
 
-  const systemPrompt = language === "en"
+  const basePrompt = language === "en"
     ? `You are a senior ASE-certified automotive technician assistant for RepairScout. Respond in English.
 Your assessment is preliminary and must never be presented as a confirmed diagnosis.
 Prioritize safety above all. Clearly indicate when the vehicle should not be driven.
@@ -545,6 +652,10 @@ Los costos deben ser rangos prudentes en dólares estadounidenses basados en rep
 Para cada posible causa, explica la razón técnica de POR QUÉ los síntomas descritos apuntan a esa causa — sé específico sobre la relación mecánica o eléctrica. Incluye cómo confirmar o descartar la causa.
 Siempre proporciona un escenario realista de mejor y peor caso para que el conductor conozca el rango de costos que enfrenta.
 Genera 3–4 preguntas de seguimiento específicas que, si se responden, reducirían significativamente el diagnóstico.`;
+
+  const systemPrompt = basePrompt
+    + groundedCodesSection(input, language)
+    + (await groundedOutcomesSection(input, language).catch(() => ""));
 
   const userPrompt = JSON.stringify({
     vehicle,

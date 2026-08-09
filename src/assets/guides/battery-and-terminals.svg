@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 320" width="480" height="320" role="img" aria-labelledby="batteryTitle">
+  <title id="batteryTitle">Car battery with positive and negative terminals</title>
+  <rect width="480" height="320" fill="#0d1829" rx="12"/>
+
+  <!-- Battery body -->
+  <rect x="130" y="90" width="220" height="150" rx="10" fill="#1e293b" stroke="#475569" stroke-width="3"/>
+  <rect x="130" y="90" width="220" height="24" rx="10" fill="#334155"/>
+
+  <!-- Caps -->
+  <circle cx="170" cy="102" r="7" fill="#0d1829" stroke="#475569" stroke-width="2"/>
+  <circle cx="210" cy="102" r="7" fill="#0d1829" stroke="#475569" stroke-width="2"/>
+  <circle cx="270" cy="102" r="7" fill="#0d1829" stroke="#475569" stroke-width="2"/>
+  <circle cx="310" cy="102" r="7" fill="#0d1829" stroke="#475569" stroke-width="2"/>
+
+  <!-- Positive terminal (left) -->
+  <circle cx="175" cy="150" r="20" fill="#dc2626" stroke="#fca5a5" stroke-width="2"/>
+  <text x="175" y="156" text-anchor="middle" font-family="system-ui, sans-serif" font-size="20" font-weight="700" fill="#fff">+</text>
+  <rect x="160" y="170" width="30" height="34" rx="4" fill="#7f1d1d" stroke="#dc2626" stroke-width="2"/>
+
+  <!-- Negative terminal (right) -->
+  <circle cx="305" cy="150" r="20" fill="#1e293b" stroke="#64748b" stroke-width="2"/>
+  <text x="305" y="156" text-anchor="middle" font-family="system-ui, sans-serif" font-size="20" font-weight="700" fill="#e2e8f0">−</text>
+  <rect x="290" y="170" width="30" height="34" rx="4" fill="#1e293b" stroke="#64748b" stroke-width="2"/>
+
+  <!-- Corrosion crust on negative clamp, per the guide's step 2 -->
+  <g fill="#a3e635" opacity="0.55">
+    <circle cx="292" cy="176" r="4"/>
+    <circle cx="300" cy="172" r="3"/>
+    <circle cx="308" cy="178" r="4.5"/>
+    <circle cx="296" cy="185" r="3"/>
+    <circle cx="312" cy="188" r="3.5"/>
+  </g>
+
+  <!-- Voltage label -->
+  <rect x="200" y="220" width="80" height="26" rx="6" fill="#0d1829" stroke="#475569" stroke-width="1.5"/>
+  <text x="240" y="238" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" fill="#4ade80" font-weight="700">12.6V</text>
+
+  <!-- Labels -->
+  <g font-family="system-ui, sans-serif" font-size="13" fill="#e2e8f0">
+    <text x="90" y="230">Positive (+)</text>
+    <line x1="140" y1="225" x2="168" y2="180" stroke="#94a3b8" stroke-width="1.5"/>
+
+    <text x="330" y="230">Negative (−) —</text>
+    <text x="330" y="246">corrosion shown here</text>
+    <line x1="325" y1="220" x2="302" y2="183" stroke="#94a3b8" stroke-width="1.5"/>
+  </g>
+</svg>

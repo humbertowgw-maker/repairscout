@@ -1,5 +1,7 @@
 # RepairScout
 
+> **Project status:** First public version. The core workflow is implemented, but the product remains an early-stage preview with additional validation and production work still ahead.
+
 RepairScout is a two-sided automotive repair platform:
 
 - Drivers describe a vehicle problem, receive a preliminary AI assessment, compare parts and labor costs, and request verified quotes.

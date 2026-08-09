@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 320" width="480" height="320" role="img" aria-labelledby="sparkPlugTitle">
+  <title id="sparkPlugTitle">Spark plug cross-section showing electrode, gap, and insulator</title>
+  <rect width="480" height="320" fill="#0d1829" rx="12"/>
+
+  <!-- Hex nut -->
+  <rect x="205" y="46" width="70" height="34" fill="#475569" stroke="#64748b" stroke-width="2"/>
+  <!-- Ceramic insulator -->
+  <rect x="216" y="80" width="48" height="90" fill="#1e293b" stroke="#64748b" stroke-width="2"/>
+  <!-- Threaded shaft -->
+  <rect x="222" y="170" width="36" height="80" fill="#334155" stroke="#475569" stroke-width="2"/>
+  <g stroke="#475569" stroke-width="1.5">
+    <line x1="222" y1="180" x2="258" y2="180"/>
+    <line x1="222" y1="192" x2="258" y2="192"/>
+    <line x1="222" y1="204" x2="258" y2="204"/>
+    <line x1="222" y1="216" x2="258" y2="216"/>
+    <line x1="222" y1="228" x2="258" y2="228"/>
+    <line x1="222" y1="240" x2="258" y2="240"/>
+  </g>
+  <!-- Ground electrode (hooked arm) -->
+  <path d="M 258 250 L 258 268 Q 258 278 248 278 L 232 278" fill="none" stroke="#f97316" stroke-width="5" stroke-linecap="round"/>
+  <!-- Center electrode -->
+  <line x1="240" y1="250" x2="240" y2="272" stroke="#f97316" stroke-width="5" stroke-linecap="round"/>
+  <!-- Spark gap glow -->
+  <circle cx="240" cy="274" r="5" fill="#fbbf24" opacity="0.8"/>
+
+  <g font-family="system-ui, sans-serif" font-size="13" fill="#e2e8f0">
+    <text x="60" y="66">Hex nut</text>
+    <line x1="100" y1="61" x2="203" y2="60" stroke="#94a3b8" stroke-width="1.5"/>
+
+    <text x="330" y="115">Ceramic insulator</text>
+    <line x1="325" y1="110" x2="266" y2="115" stroke="#94a3b8" stroke-width="1.5"/>
+
+    <text x="330" y="200">Thread</text>
+    <line x1="325" y1="195" x2="260" y2="200" stroke="#94a3b8" stroke-width="1.5"/>
+
+    <text x="60" y="285">Electrode + gap</text>
+    <line x1="120" y1="280" x2="235" y2="272" stroke="#94a3b8" stroke-width="1.5"/>
+  </g>
+</svg>

@@ -1394,7 +1394,9 @@ export async function adminReviewOutcome(id, adminUserId, { approve, guideCatego
  * into future diagnoses, matching Mitchell1 SureTrack's editorial-curation model
  * rather than treating every user report as ground truth.
  */
-export async function findConfirmedOutcomes({ make, model, symptomKeywords = [], obdCodes = [], limit = 3 }) {
+export async function findConfirmedOutcomes({
+  make, model, symptomKeywords = [], obdCodes = [], year, engine, limit = 3,
+}) {
   if (!make || !model) return [];
   if (pool) {
     await ensureDatabase();
@@ -1409,14 +1411,20 @@ export async function findConfirmedOutcomes({ make, model, symptomKeywords = [],
            exists (select 1 from unnest($3::text[]) k where cause_title ilike k or symptom_description ilike k)
            or (obd_codes && $4::text[])
          )
-       order by (trust_tier = 'admin_reviewed') desc, created_at desc
-       limit $5`,
-      [make, model, likePatterns, obdCodes, limit],
+       order by
+         (trust_tier = 'admin_reviewed') desc,
+         ($5::text is not null and vehicle->>'year' = $5) desc,
+         ($6::text is not null and vehicle->>'engine' ilike '%' || $6 || '%') desc,
+         created_at desc
+       limit $7`,
+      [make, model, likePatterns, obdCodes, year != null ? String(year) : null, engine ?? null, limit],
     );
     return result.rows.map(mapOutcomeRow);
   }
   const store = await readStore();
   const kwLower = symptomKeywords.map((k) => k.toLowerCase());
+  const yearStr = year != null ? String(year) : null;
+  const engineLower = engine ? String(engine).toLowerCase() : null;
   return (store.repairOutcomes || [])
     .filter((o) =>
       (o.trustTier === "shop_confirmed" || o.trustTier === "admin_reviewed") &&
@@ -1428,7 +1436,21 @@ export async function findConfirmedOutcomes({ make, model, symptomKeywords = [],
         (obdCodes.length && o.obdCodes.some((c) => obdCodes.includes(c)))
       )
     )
-    .sort((a, b) => (b.trustTier === "admin_reviewed") - (a.trustTier === "admin_reviewed"))
+    .sort((a, b) => {
+      const adminDiff = (b.trustTier === "admin_reviewed") - (a.trustTier === "admin_reviewed");
+      if (adminDiff !== 0) return adminDiff;
+      if (yearStr) {
+        const yearDiff = (String(b.vehicle?.year) === yearStr) - (String(a.vehicle?.year) === yearStr);
+        if (yearDiff !== 0) return yearDiff;
+      }
+      if (engineLower) {
+        const engineDiff =
+          String(b.vehicle?.engine || "").toLowerCase().includes(engineLower) -
+          String(a.vehicle?.engine || "").toLowerCase().includes(engineLower);
+        if (engineDiff !== 0) return engineDiff;
+      }
+      return 0;
+    })
     .slice(0, limit);
 }
 

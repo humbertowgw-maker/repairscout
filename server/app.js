@@ -49,6 +49,7 @@ import {
   upsertPhoneVerification,
   upsertShopProfile,
   createOutcomeSurvey,
+  findConfirmedOutcomes,
   getOutcomeByToken,
   respondToOutcomeSurvey,
   shopConfirmOutcome,
@@ -61,6 +62,8 @@ import {
 import { diagnoseVehicle, getDiagnosisProviderStatus } from "./diagnosis.js";
 import { REPAIR_GUIDES } from "./repair-guides.js";
 import { lookupCodes } from "./obd-codes.js";
+import { decodeVinFromNhtsa, getRecallsForVehicle } from "./nhtsa.js";
+import { extractSearchKeywords } from "./symptom-search.js";
 import { buildQuoteFromDiagnosis } from "./parts.js";
 import { sendQuoteNotification, sendShopApprovalNotification, sendInvoiceNotification, sendStageUpdateNotification, sendOutcomeReminderNotification } from "./notify.js";
 import { searchRepairShops } from "./shops.js";
@@ -118,6 +121,9 @@ app.use("/api/auth", limiter(15 * 60 * 1000, 25));
 app.use("/api/diagnose", limiter(15 * 60 * 1000, 30));
 app.use("/api/quote-requests", limiter(15 * 60 * 1000, 60));
 app.use("/api/shop-profile", limiter(15 * 60 * 1000, 60));
+app.use("/api/obd/fix-history", limiter(15 * 60 * 1000, 120));
+app.use("/api/vehicle/recalls", limiter(15 * 60 * 1000, 30));
+app.use("/api/repairs/search", limiter(15 * 60 * 1000, 60));
 app.use(optionalAuth);
 
 app.get("/api/health", rateLimit({ windowMs: 60 * 1000, limit: 60 }), (_request, response) => {
@@ -197,28 +203,33 @@ app.get("/api/vehicle/decode", async (request, response) => {
     return response.status(400).json({ error: "Ingresa un VIN válido de 17 caracteres." });
   }
   try {
-    const nhtsaResponse = await fetch(
-      `https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValuesExtended/${encodeURIComponent(vin)}?format=json`,
-    );
-    if (!nhtsaResponse.ok) throw new Error("NHTSA request failed");
-    const payload = await nhtsaResponse.json();
-    const result = payload.Results?.[0];
-    if (!result || (!result.Make && !result.Model)) {
+    const decoded = await decodeVinFromNhtsa(vin);
+    return response.json({ vin, ...decoded });
+  } catch (error) {
+    if (error.code === "NOT_FOUND") {
       return response.status(404).json({ error: "No encontramos información para ese VIN." });
     }
-    return response.json({
-      vin,
-      year: result.ModelYear,
-      make: result.Make,
-      model: result.Model,
-      trim: result.Trim || result.Series,
-      engine: result.DisplacementL ? `${Number(result.DisplacementL).toFixed(1)}L` : result.EngineModel,
-      fuelType: result.FuelTypePrimary,
-      bodyClass: result.BodyClass,
-      driveType: result.DriveType,
-    });
-  } catch {
     return response.status(502).json({ error: "El servicio de VIN no está disponible en este momento." });
+  }
+});
+
+// Federally-mandated safety recalls only, via NHTSA's free public API — NOT
+// manufacturer TSBs, which aren't freely available from any source. Keep that
+// distinction explicit in any consuming UI copy.
+app.get("/api/vehicle/recalls", async (request, response) => {
+  const vin = String(request.query.vin || "").trim().toUpperCase();
+  if (!/^[A-HJ-NPR-Z0-9]{17}$/.test(vin)) {
+    return response.status(400).json({ error: "Ingresa un VIN válido de 17 caracteres." });
+  }
+  try {
+    const { year, make, model } = await decodeVinFromNhtsa(vin);
+    const recalls = await getRecallsForVehicle({ year, make, model });
+    return response.json({ vin, year, make, model, recallCount: recalls.length, recalls });
+  } catch (error) {
+    if (error.code === "NOT_FOUND") {
+      return response.status(404).json({ error: "No encontramos información para ese VIN." });
+    }
+    return response.status(502).json({ error: "El servicio de retiros de NHTSA no está disponible en este momento." });
   }
 });
 
@@ -988,6 +999,61 @@ app.get("/api/obd/lookup", (request, response) => {
   if (!codes.length) return response.status(400).json({ error: "No codes provided." });
   const { found, unknown } = lookupCodes(codes);
   return response.json({ found, unknown });
+});
+
+// Vehicle-specific confirmed-fix history for a scanned OBD code — same generic
+// definitions as /api/obd/lookup, plus real confirmed fixes other users reported
+// for this exact code on this exact make/model (Identifix "Direct-Hit" style).
+app.get("/api/obd/fix-history", async (request, response) => {
+  const codes = String(request.query.codes || "")
+    .split(",")
+    .map((c) => c.trim().toUpperCase())
+    .filter(Boolean)
+    .slice(0, 10);
+  const make = String(request.query.make || "").trim();
+  const model = String(request.query.model || "").trim();
+  const year = String(request.query.year || "").trim() || undefined;
+  const engine = String(request.query.engine || "").trim() || undefined;
+  if (!codes.length || !make || !model) {
+    return response.status(400).json({ error: "Faltan códigos, marca o modelo del vehículo." });
+  }
+  try {
+    const { found } = lookupCodes(codes);
+    const byCode = {};
+    for (const code of codes) {
+      const fixes = await findConfirmedOutcomes({ make, model, year, engine, obdCodes: [code], limit: 5 });
+      byCode[code] = { definition: found[code] || null, fixes };
+    }
+    return response.json({ vehicleMatch: { make, model, year: year || null }, byCode });
+  } catch (error) {
+    console.error("OBD fix history failed:", error);
+    return response.status(502).json({ error: "No pudimos buscar el historial de reparaciones en este momento." });
+  }
+});
+
+// Symptom + vehicle search over confirmed fixes other users reported —
+// Identifix "Direct-Hit" style. Make+model are the only hard filter (see
+// findConfirmedOutcomes); year/engine only affect ranking, never exclude a
+// result, since repair_outcomes.vehicle has no schema-enforced keys and
+// outcome volume is still early/sparse.
+app.get("/api/repairs/search", async (request, response) => {
+  const make = String(request.query.make || "").trim();
+  const model = String(request.query.model || "").trim();
+  const symptom = String(request.query.symptom || "").trim();
+  const year = String(request.query.year || "").trim() || undefined;
+  const engine = String(request.query.engine || "").trim() || undefined;
+  const limit = Math.min(Number.parseInt(request.query.limit, 10) || 10, 25);
+  if (!make || !model || symptom.length < 3) {
+    return response.status(400).json({ error: "Ingresa marca, modelo y una descripción del síntoma (mínimo 3 caracteres)." });
+  }
+  try {
+    const keywords = extractSearchKeywords(symptom);
+    const results = await findConfirmedOutcomes({ make, model, year, engine, symptomKeywords: keywords, limit });
+    return response.json({ query: { make, model, year: year || null, engine: engine || null, symptom }, count: results.length, results });
+  } catch (error) {
+    console.error("Repair search failed:", error);
+    return response.status(502).json({ error: "No pudimos buscar reparaciones confirmadas en este momento." });
+  }
 });
 
 // ── Parts search (AI-generated local + online results) ────────────────────────

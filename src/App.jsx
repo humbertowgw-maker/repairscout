@@ -105,6 +105,8 @@ import {
   getAdminOutcomes,
   adminReviewOutcome,
   getGuideStats,
+  getObdFixHistory,
+  getRecalls,
 } from "./api";
 import { T, confidenceDisplay, safetyLevelDisplay, statusDisplay, quoteStatusKeys } from "./i18n";
 import { matchGuideForCause } from "./repairGuides";
@@ -128,6 +130,7 @@ import wheelBearingGuideImg from "./assets/guides/wheel-bearing.svg";
 import headlightBulbGuideImg from "./assets/guides/headlight-bulb.svg";
 import wiperBladesGuideImg from "./assets/guides/wiper-blades.svg";
 import flatTireGuideImg from "./assets/guides/flat-tire-spare.svg";
+import ConfirmedFixSearchPage from "./ConfirmedFixSearchPage";
 
 const LangCtx = React.createContext({ lang: "es", setLang: () => {} });
 function useT() {
@@ -167,6 +170,7 @@ function TopBar({ portal, setPortal, page, setPage, user, onAuth, onLogout }) {
         <button className={page === "home" && portal === "shop" ? "active" : ""} onClick={() => goHome("shop")}>
           {t("forShops")}
         </button>
+        <button className={page === "search" ? "active" : ""} onClick={() => { setPage("search"); setMobileOpen(false); }}>{t("searchNav")}</button>
         <button onClick={() => { setPage("support"); setMobileOpen(false); }}>{t("support")}</button>
       </nav>
       <div className="top-actions">
@@ -2907,6 +2911,8 @@ function CustomerPortal({ user, onRequireAuth }) {
   const [openGuide, setOpenGuide] = useState(null);
   const [obdScanning, setObdScanning] = useState(false);
   const [obdScanError, setObdScanError] = useState("");
+  const [obdFixHistory, setObdFixHistory] = useState(null);
+  const [obdFixHistoryLoading, setObdFixHistoryLoading] = useState(false);
 
   const scanObdAdapter = async () => {
     setObdScanning(true);
@@ -2936,6 +2942,9 @@ function CustomerPortal({ user, onRequireAuth }) {
   const [diagnosis, setDiagnosis] = useState(null);
   const [loading, setLoading] = useState(false);
   const [vinLoading, setVinLoading] = useState(false);
+  const [recalls, setRecalls] = useState(null);
+  const [recallsLoading, setRecallsLoading] = useState(false);
+  const [recallsError, setRecallsError] = useState("");
   const [error, setError] = useState("");
   const [availableShops, setAvailableShops] = useState(demoShopList);
   const [shopsLoading, setShopsLoading] = useState(false);
@@ -2960,9 +2969,17 @@ function CustomerPortal({ user, onRequireAuth }) {
 
   const lookupVin = async () => {
     setError(""); setVinLoading(true);
+    setRecalls(null); setRecallsError("");
     try { setVehicle(await decodeVin(vin)); }
     catch (e) { setError(e.message); }
     finally { setVinLoading(false); }
+  };
+
+  const checkRecalls = async () => {
+    setRecallsError(""); setRecallsLoading(true);
+    try { setRecalls(await getRecalls(vin)); }
+    catch (e) { setRecallsError(e.message); }
+    finally { setRecallsLoading(false); }
   };
 
   const updateVehicleField = (field, value) => {
@@ -3035,6 +3052,29 @@ function CustomerPortal({ user, onRequireAuth }) {
     .map((code) => code.trim().toUpperCase())
     .filter(Boolean);
 
+  // Debounced so it doesn't fire on every keystroke while typing codes/vehicle
+  // fields — only after the user pauses. Silently no-ops (never shows an error
+  // banner) since this is a supplementary badge, not a required step.
+  useEffect(() => {
+    if (!obdCodes.length || !vehicle.make || !vehicle.model) {
+      setObdFixHistory(null);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setObdFixHistoryLoading(true);
+      getObdFixHistory(obdCodes, vehicle)
+        .then(setObdFixHistory)
+        .catch(() => setObdFixHistory(null))
+        .finally(() => setObdFixHistoryLoading(false));
+    }, 500);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [obdCodes.join(","), vehicle.make, vehicle.model, vehicle.year, vehicle.engine]);
+
+  const obdFixCount = obdFixHistory
+    ? Object.values(obdFixHistory.byCode || {}).reduce((sum, entry) => sum + (entry.fixes?.length || 0), 0)
+    : 0;
+
   return (
     <main>
       {otpOpen && (
@@ -3088,6 +3128,35 @@ function CustomerPortal({ user, onRequireAuth }) {
                   {vinLoading ? t("vinLoading") : t("vinBtn")}
                 </button>
               </div>
+              <button
+                type="button"
+                className="outline"
+                style={{ marginTop: 6 }}
+                onClick={checkRecalls}
+                disabled={recallsLoading || vin.length !== 17}
+              >
+                {recallsLoading ? t("recallsLoading") : t("checkRecallsBtn")}
+              </button>
+              {recallsError && <p className="form-error">{recallsError}</p>}
+              {recalls && (
+                <div style={{ background: "rgba(96,165,250,.08)", border: "1px solid rgba(96,165,250,.25)", borderRadius: 8, padding: "10px 14px", marginTop: 8 }}>
+                  <div style={{ fontSize: 10, color: "#60a5fa", fontWeight: 700, letterSpacing: ".06em", marginBottom: 4 }}>
+                    {t("recallsTitle").replace("{count}", recalls.recallCount)}
+                  </div>
+                  {recalls.recallCount === 0 ? (
+                    <div style={{ fontSize: 13, color: "#e2e8f0" }}>{t("recallsNone")}</div>
+                  ) : (
+                    <ul style={{ margin: "6px 0 0", paddingLeft: 18, fontSize: 12.5, color: "#e2e8f0" }}>
+                      {recalls.recalls.slice(0, 5).map((r) => (
+                        <li key={r.campaignNumber} style={{ marginBottom: 6 }}>
+                          <strong>{r.component}</strong> — {r.summary.slice(0, 140)}{r.summary.length > 140 ? "…" : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 6 }}>{t("recallsScopeNote")}</div>
+                </div>
+              )}
             </>
           ) : (
             <>
@@ -3136,6 +3205,16 @@ function CustomerPortal({ user, onRequireAuth }) {
             placeholder={t("obdPlaceholder")}
           />
           <small className="obd-hint">{t("obdHint")}</small>
+          {obdFixHistoryLoading && (
+            <small className="obd-hint">{t("obdFixHistoryLoading")}</small>
+          )}
+          {!obdFixHistoryLoading && obdFixHistory && obdFixCount > 0 && (
+            <div style={{ background: "rgba(34,197,94,.08)", border: "1px solid rgba(34,197,94,.25)", borderRadius: 8, padding: "10px 14px", marginTop: 8 }}>
+              <div style={{ fontSize: 10, color: "#4ade80", fontWeight: 700, letterSpacing: ".06em" }}>
+                {t("obdFixHistoryCount").replace("{count}", obdFixCount).replace("{vehicle}", `${vehicle.make} ${vehicle.model}`)}
+              </div>
+            </div>
+          )}
           {obdBluetoothSupported() && (
             <div style={{ marginTop: 8 }}>
               <button
@@ -4806,6 +4885,8 @@ function App() {
             ? portal === "customer"
               ? <CustomerPortal user={user} onRequireAuth={() => setAuthOpen(true)} />
               : <ShopPortal user={user} onRequireAuth={() => setAuthOpen(true)} />
+            : page === "search"
+            ? <ConfirmedFixSearchPage lang={lang} setPage={setPage} />
             : <LegalPage page={page} setPage={setPage} />
           }
           {(portal === "customer" || portal === "shop" || page !== "home") && <Footer setPage={setPage} />}

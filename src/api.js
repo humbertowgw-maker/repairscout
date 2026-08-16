@@ -22,6 +22,28 @@ export function decodeVin(vin) {
   return request(`/api/vehicle/decode?vin=${encodeURIComponent(vin)}`);
 }
 
+export function getRecalls(vin) {
+  return request(`/api/vehicle/recalls?vin=${encodeURIComponent(vin)}`);
+}
+
+export function searchConfirmedFixes(params) {
+  const query = new URLSearchParams(
+    Object.fromEntries(Object.entries(params).filter(([, value]) => value)),
+  );
+  return request(`/api/repairs/search?${query}`);
+}
+
+export function getObdFixHistory(codes, vehicle = {}) {
+  const params = new URLSearchParams({
+    codes: codes.join(","),
+    make: vehicle.make || "",
+    model: vehicle.model || "",
+    year: vehicle.year || "",
+    engine: vehicle.engine || "",
+  });
+  return request(`/api/obd/fix-history?${params}`);
+}
+
 export function createDiagnosis(input) {
   return request("/api/diagnose", {
     method: "POST",

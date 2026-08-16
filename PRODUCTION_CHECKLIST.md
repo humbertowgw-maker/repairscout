@@ -11,10 +11,8 @@ https://repairscout-smoky.vercel.app
 3. [Resolved differently] Real AI diagnosis now runs via Groq/Gemini/OpenRouter/local
    Ollama, tried in that order before AI Gateway — the payment-card requirement no
    longer blocks anything. See "Current AI status" below.
-4. Redeploy and confirm `/api/health` reports:
-   - `"database": "postgres"`
-   - `"authConfigured": true`
-   - `"aiConfigured": true`
+4. [Complete] `/api/health` confirmed live 2026-08-16: `"database":"postgres"`,
+   `"authConfigured":true`, `"aiConfigured":true`.
 5. Register one driver account and one shop account.
 6. Verify that a driver quote appears only in the intended shop inbox.
 7. Replace demo part prices with licensed supplier or affiliate integrations.
@@ -33,6 +31,12 @@ https://repairscout-smoky.vercel.app
 - Parts prices and shop ratings shown in the interface are demonstration data.
 - Privacy, terms, support, and quote-consent screens are included for private demos.
 - API routes include lightweight in-memory rate limiting suitable for preview, not a replacement for Vercel Firewall or a durable Redis-backed limiter.
+- Three Identifix-style features live as of 2026-08-16: confirmed-fix search
+  (`/search`, `GET /api/repairs/search`), OBD code + vehicle-specific fix
+  history (`GET /api/obd/fix-history`), and safety recalls by VIN
+  (`GET /api/vehicle/recalls`, NHTSA-sourced, recalls only — not TSBs).
+  Confirmed live in production via a real `curl` against
+  `/api/repairs/search`.
 
 ## Vercel project
 

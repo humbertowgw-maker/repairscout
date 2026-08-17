@@ -194,6 +194,12 @@ describe("diagnoseVehicle — fallback chain ordering", () => {
       "http://100.72.213.92:11435/v1/chat/completions",
     ]);
     expect(generateTextMock).toHaveBeenCalledTimes(1);
+    // ai SDK v7 regression check: v6 used `system`, v7 renamed it to
+    // `instructions` — a silently-wrong key here would mean the gateway
+    // model gets no system prompt at all, not a loud failure.
+    const gatewayCallArgs = generateTextMock.mock.calls[0][0];
+    expect(gatewayCallArgs).toHaveProperty("instructions");
+    expect(gatewayCallArgs).not.toHaveProperty("system");
     expect(openaiParseMock).toHaveBeenCalledTimes(1);
     expect(result.source).toBe("openai");
     expect(result.summary).toBe("from openai");

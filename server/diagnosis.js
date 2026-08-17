@@ -468,7 +468,7 @@ const gatewayDiagnosisSchema = jsonSchema(zodTextFormat(DiagnosisSchema, "vehicl
 async function diagnoseWithGateway(systemPrompt, userPrompt) {
   const { output } = await generateText({
     model: process.env.AI_GATEWAY_MODEL || "openai/gpt-5.4",
-    system: systemPrompt,
+    instructions: systemPrompt,
     prompt: userPrompt,
     output: Output.object({ schema: gatewayDiagnosisSchema }),
     providerOptions: {

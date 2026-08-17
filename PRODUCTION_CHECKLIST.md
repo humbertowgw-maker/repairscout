@@ -28,13 +28,14 @@ https://repairscout-smoky.vercel.app
     Free plan with point-in-time recovery enabled, 6-hour retention window
     (Free plan's max — paid Launch/Scale plans go to 1-30 days). Upgrading
     the Neon plan tier is a cost/risk decision, not a code task.
-    **Monitoring**: Sentry is wired up in code (2026-08-17) — same pattern as
-    white-glove-backend/frontend, initialized before anything else in
-    `server/index.js`, capturing uncaught exceptions/rejections and any
-    unhandled Express route error. Fails closed to console-only logging if
-    `SENTRY_DSN` is unset. Still needs a real DSN provisioned (create a
-    Sentry project, add `SENTRY_DSN` to the Vercel env vars) before it
-    actually reports anywhere.
+    **Monitoring**: Sentry is fully live (2026-08-17) — backend (`@sentry/node`,
+    `server/index.js`/`app.js`) and frontend (`@sentry/react`, `src/main.jsx`)
+    both initialized with a real DSN, gated on `SENTRY_DSN`/`VITE_SENTRY_DSN`
+    (no-op if unset). Verified with a real event: a test POST to Sentry's
+    ingest API for this DSN returned HTTP 200 with a real event id. DSN is in
+    `.env.local` (gitignored) for local dev. **Still needs Humberto**: add
+    `SENTRY_DSN` and `VITE_SENTRY_DSN` to Vercel's production env vars so it
+    reports from production, not just local dev.
 
 ## Current public-preview behavior
 

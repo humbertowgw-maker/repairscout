@@ -107,6 +107,11 @@ import {
   getGuideStats,
   getObdFixHistory,
   getRecalls,
+  verifyEmail,
+  resendVerification,
+  forgotPassword,
+  resetPassword,
+  deleteAccount,
 } from "./api";
 import { T, confidenceDisplay, safetyLevelDisplay, statusDisplay, quoteStatusKeys } from "./i18n";
 import { matchGuideForCause } from "./repairGuides";
@@ -152,6 +157,7 @@ function Brand() {
 
 function TopBar({ portal, setPortal, page, setPage, user, onAuth, onLogout }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const { lang, setLang } = useLang();
   const t = useT();
   const goHome = (nextPortal = portal) => {
@@ -186,9 +192,22 @@ function TopBar({ portal, setPortal, page, setPage, user, onAuth, onLogout }) {
           {lang === "es" ? "EN" : "ES"}
         </button>
         {user ? (
-          <button className="account-chip" onClick={onLogout}><UserRound size={16} />{user.name}<small>{t("signOut")}</small></button>
+          <>
+            <button className="account-chip" onClick={onLogout}><UserRound size={16} />{user.name}<small>{t("signOut")}</small></button>
+            <button
+              type="button"
+              onClick={() => setDeleteModalOpen(true)}
+              title={lang === "es" ? "Eliminar cuenta" : "Delete account"}
+              style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 11, padding: "0 4px" }}
+            >
+              <Trash2 size={14} />
+            </button>
+          </>
         ) : (
           <button className="text-button" onClick={onAuth}>{t("signIn")}</button>
+        )}
+        {deleteModalOpen && (
+          <DeleteAccountModal onClose={() => setDeleteModalOpen(false)} onDeleted={() => { setDeleteModalOpen(false); onLogout(); }} />
         )}
         <button className="primary small" onClick={() => goHome(portal === "customer" ? "shop" : "customer")}>
           {portal === "customer" ? t("shopPortal") : t("driverView")}
@@ -208,12 +227,18 @@ function AuthModal({ onClose, onAuthenticated }) {
   const [form, setForm] = useState({ name: "", email: "", password: "", role: "driver", shopName: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [forgotMessage, setForgotMessage] = useState("");
 
   const submit = async (event) => {
     event.preventDefault();
     setError("");
     setLoading(true);
     try {
+      if (mode === "forgot") {
+        const result = await forgotPassword(form.email, lang);
+        setForgotMessage(result.message);
+        return;
+      }
       const result = mode === "register"
         ? await registerAccount(form)
         : await loginAccount({ email: form.email, password: form.password });
@@ -226,6 +251,34 @@ function AuthModal({ onClose, onAuthenticated }) {
       setLoading(false);
     }
   };
+
+  if (mode === "forgot") {
+    return (
+      <div className="modal-backdrop centered" onClick={onClose}>
+        <form className="auth-modal" onSubmit={submit} onClick={(e) => e.stopPropagation()}>
+          <button type="button" className="drawer-close" onClick={onClose}><X /></button>
+          <span className="eyebrow dark"><ShieldCheck size={15} /> RepairScout</span>
+          <h2>{isEn ? "Reset your password" : "Restablece tu contraseña"}</h2>
+          {forgotMessage ? (
+            <p>{forgotMessage}</p>
+          ) : (
+            <>
+              <p>{isEn ? "Enter your email and we'll send you a reset link." : "Ingresa tu correo y te enviaremos un enlace para restablecerla."}</p>
+              <label htmlFor="forgot-email">{isEn ? "Email" : "Correo electrónico"}</label>
+              <input id="forgot-email" type="email" value={form.email} onChange={(e) => setForm((c) => ({ ...c, email: e.target.value }))} required />
+              {error && <p className="form-error">{error}</p>}
+              <button className="primary full" disabled={loading}>
+                {loading ? (isEn ? "Sending..." : "Enviando...") : (isEn ? "Send reset link" : "Enviar enlace")}
+              </button>
+            </>
+          )}
+          <button type="button" className="auth-switch" onClick={() => { setMode("login"); setForgotMessage(""); }}>
+            {isEn ? "← Back to sign in" : "← Volver a iniciar sesión"}
+          </button>
+        </form>
+      </div>
+    );
+  }
 
   return (
     <div className="modal-backdrop centered" onClick={onClose}>
@@ -263,6 +316,60 @@ function AuthModal({ onClose, onAuthenticated }) {
           {mode === "register"
             ? (isEn ? "Already have an account? Sign in" : "¿Ya tienes cuenta? Inicia sesión")
             : (isEn ? "No account? Sign up" : "¿No tienes cuenta? Regístrate")}
+        </button>
+        {mode === "login" && (
+          <button type="button" className="auth-switch" onClick={() => setMode("forgot")}>
+            {isEn ? "Forgot your password?" : "¿Olvidaste tu contraseña?"}
+          </button>
+        )}
+      </form>
+    </div>
+  );
+}
+
+function DeleteAccountModal({ onClose, onDeleted }) {
+  const { lang } = useLang();
+  const isEn = lang === "en";
+  const [password, setPassword] = useState("");
+  const [confirmText, setConfirmText] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const confirmed = confirmText.trim().toUpperCase() === "DELETE";
+
+  const submit = async (event) => {
+    event.preventDefault();
+    if (!confirmed) return;
+    setError("");
+    setLoading(true);
+    try {
+      await deleteAccount(password);
+      window.localStorage.removeItem("repairscout_token");
+      onDeleted();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop centered" onClick={onClose}>
+      <form className="auth-modal" onSubmit={submit} onClick={(e) => e.stopPropagation()}>
+        <button type="button" className="drawer-close" onClick={onClose}><X /></button>
+        <span className="eyebrow dark"><Trash2 size={15} /> {isEn ? "Delete account" : "Eliminar cuenta"}</span>
+        <h2>{isEn ? "This can't be undone" : "Esto no se puede deshacer"}</h2>
+        <p>
+          {isEn
+            ? "Your account, saved vehicles, and any personal details on your quotes and diagnoses will be permanently removed."
+            : "Tu cuenta, vehículos guardados y los datos personales en tus cotizaciones y diagnósticos se eliminarán permanentemente."}
+        </p>
+        <label htmlFor="delete-password">{isEn ? "Confirm your password" : "Confirma tu contraseña"}</label>
+        <input id="delete-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+        <label htmlFor="delete-confirm">{isEn ? 'Type "DELETE" to confirm' : 'Escribe "DELETE" para confirmar'}</label>
+        <input id="delete-confirm" value={confirmText} onChange={(e) => setConfirmText(e.target.value)} required />
+        {error && <p className="form-error">{error}</p>}
+        <button className="primary full" disabled={loading || !confirmed} style={{ background: confirmed ? "#b91c1c" : undefined }}>
+          {loading ? (isEn ? "Deleting..." : "Eliminando...") : (isEn ? "Permanently delete my account" : "Eliminar mi cuenta permanentemente")}
         </button>
       </form>
     </div>
@@ -2510,6 +2617,102 @@ function TrackPage({ token }) {
               </div>
             )}
           </>
+        )}
+      </section>
+    </main>
+  );
+}
+
+function VerifyEmailPage({ token }) {
+  const { lang } = useLang();
+  const isEn = lang === "en";
+  const [status, setStatus] = useState("loading");
+  const [error, setError] = useState("");
+  // The verification token is single-use — React StrictMode's dev-mode double
+  // effect-invocation would otherwise burn it on the first call and then show
+  // "invalid" from the second, even though verification actually succeeded.
+  const firedRef = React.useRef(false);
+
+  useEffect(() => {
+    if (firedRef.current) return;
+    firedRef.current = true;
+    verifyEmail(token)
+      .then(() => setStatus("success"))
+      .catch((e) => { setError(e.message); setStatus("error"); });
+  }, [token]);
+
+  return (
+    <main className="legal-page" style={{ minHeight: "100vh" }}>
+      <section className="legal-card" style={{ maxWidth: 480, textAlign: "center" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 24 }}>
+          <span style={{ background: "#1e3a5f", borderRadius: 8, padding: "6px 10px", color: "#f97316", display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 700 }}>
+            <Wrench size={16} /> RepairScout
+          </span>
+        </div>
+        {status === "loading" && <p style={{ color: "#475569" }}>{isEn ? "Verifying your email…" : "Verificando tu correo…"}</p>}
+        {status === "success" && (
+          <>
+            <div style={{ fontSize: 36, marginBottom: 12 }}>✅</div>
+            <p style={{ color: "#17211d", fontWeight: 600 }}>{isEn ? "Your email is verified." : "Tu correo fue verificado."}</p>
+          </>
+        )}
+        {status === "error" && (
+          <>
+            <div style={{ fontSize: 36, marginBottom: 12 }}>⚠️</div>
+            <p style={{ color: "#f87171", fontWeight: 600 }}>{isEn ? "This link isn't valid or has expired." : "Este enlace no es válido o expiró."}</p>
+            <p style={{ fontSize: 12, color: "#64748b" }}>{error}</p>
+          </>
+        )}
+      </section>
+    </main>
+  );
+}
+
+function ResetPasswordPage({ token }) {
+  const { lang } = useLang();
+  const isEn = lang === "en";
+  const [password, setPassword] = useState("");
+  const [status, setStatus] = useState("form");
+  const [error, setError] = useState("");
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setError("");
+    setStatus("submitting");
+    try {
+      await resetPassword(token, password);
+      setStatus("success");
+    } catch (err) {
+      setError(err.message);
+      setStatus("form");
+    }
+  };
+
+  return (
+    <main className="legal-page" style={{ minHeight: "100vh" }}>
+      <section className="legal-card" style={{ maxWidth: 480 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 24 }}>
+          <span style={{ background: "#1e3a5f", borderRadius: 8, padding: "6px 10px", color: "#f97316", display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 700 }}>
+            <Wrench size={16} /> RepairScout
+          </span>
+        </div>
+        {status === "success" ? (
+          <>
+            <div style={{ fontSize: 36, marginBottom: 12 }}>✅</div>
+            <p style={{ color: "#17211d", fontWeight: 600 }}>{isEn ? "Password changed. You can log in now." : "Contraseña cambiada. Ya puedes iniciar sesión."}</p>
+          </>
+        ) : (
+          <form onSubmit={submit}>
+            <label htmlFor="new-password">{isEn ? "New password" : "Nueva contraseña"}</label>
+            <input
+              id="new-password" type="password" className="plain-input" value={password}
+              onChange={(e) => setPassword(e.target.value)} minLength={8} required
+            />
+            {error && <p className="form-error">{error}</p>}
+            <button className="primary" type="submit" disabled={status === "submitting"} style={{ marginTop: 12 }}>
+              {status === "submitting" ? (isEn ? "Saving…" : "Guardando…") : (isEn ? "Reset password" : "Restablecer contraseña")}
+            </button>
+          </form>
         )}
       </section>
     </main>
@@ -4840,6 +5043,18 @@ function App() {
     return new URLSearchParams(window.location.search).get("pid") || null;
   });
 
+  // Detect /verify-email?token=xxx URL (clicked from a verification email)
+  const [verifyEmailUrlToken] = useState(() => {
+    if (window.location.pathname !== "/verify-email") return null;
+    return new URLSearchParams(window.location.search).get("token") || null;
+  });
+
+  // Detect /reset-password?token=xxx URL (clicked from a reset email)
+  const [resetPasswordUrlToken] = useState(() => {
+    if (window.location.pathname !== "/reset-password") return null;
+    return new URLSearchParams(window.location.search).get("token") || null;
+  });
+
   useEffect(() => {
     if (!window.localStorage.getItem("repairscout_token")) return;
     getCurrentUser()
@@ -4853,7 +5068,7 @@ function App() {
 
   return (
     <LangCtx.Provider value={{ lang, setLang }}>
-      {(trackToken || outcomeToken || diagnosePendingId) ? (
+      {(trackToken || outcomeToken || diagnosePendingId || verifyEmailUrlToken || resetPasswordUrlToken) ? (
         <>
           <header className="topbar" style={{ justifyContent: "space-between" }}>
             <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -4865,7 +5080,11 @@ function App() {
               style={{ fontSize: 11, fontWeight: 700, padding: "5px 11px", borderRadius: 6, border: "1px solid #dfe5e1", background: "transparent", color: "#69736e", cursor: "pointer", fontFamily: "inherit" }}
             >{lang === "es" ? "EN" : "ES"}</button>
           </header>
-          {trackToken ? <TrackPage token={trackToken} /> : outcomeToken ? <OutcomeSurveyPage token={outcomeToken} /> : <DiagnoseResultPage pendingId={diagnosePendingId} />}
+          {trackToken ? <TrackPage token={trackToken} />
+            : outcomeToken ? <OutcomeSurveyPage token={outcomeToken} />
+            : verifyEmailUrlToken ? <VerifyEmailPage token={verifyEmailUrlToken} />
+            : resetPasswordUrlToken ? <ResetPasswordPage token={resetPasswordUrlToken} />
+            : <DiagnoseResultPage pendingId={diagnosePendingId} />}
         </>
       ) : portal === "landing" && page === "home" ? (
         <>

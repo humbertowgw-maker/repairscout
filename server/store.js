@@ -18,6 +18,9 @@ const initialData = {
   pendingDiagnoses: {},
   partsInquiries: {},
   plans: [],
+  emailVerifications: {},
+  passwordResets: {},
+  auditLogs: [],
 };
 
 async function ensureStore() {
@@ -36,13 +39,25 @@ export async function readStore() {
   return { ...initialData, ...JSON.parse(contents) };
 }
 
+// Concurrent updateStore calls (e.g. a route that fires off an audit-log write
+// and a token-creation write without awaiting either) used to race on the same
+// dataFile.tmp path and could corrupt it. Serialize all writes through one
+// promise chain so each write sees the previous one's result before starting.
+let writeQueue = Promise.resolve();
+
 export async function updateStore(update) {
-  const current = await readStore();
-  const next = update(current);
-  const temporaryFile = `${dataFile}.tmp`;
+  const result = writeQueue.then(async () => {
+    const current = await readStore();
+    const next = update(current);
+    const temporaryFile = `${dataFile}.tmp`;
 
-  await fs.writeFile(temporaryFile, JSON.stringify(next, null, 2));
-  await fs.rename(temporaryFile, dataFile);
+    await fs.writeFile(temporaryFile, JSON.stringify(next, null, 2));
+    await fs.rename(temporaryFile, dataFile);
 
-  return next;
+    return next;
+  });
+  // Keep the queue alive even if this write rejects — callers still see their
+  // own rejection via `result`, but subsequent writes aren't blocked forever.
+  writeQueue = result.catch(() => {});
+  return result;
 }

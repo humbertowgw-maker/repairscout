@@ -185,6 +185,29 @@ async function ensureDatabase() {
       created_at timestamptz not null default now()
     );
 
+    create table if not exists email_verifications (
+      token text primary key,
+      user_id uuid not null references users(id) on delete cascade,
+      expires_at timestamptz not null,
+      created_at timestamptz not null default now()
+    );
+
+    create table if not exists password_resets (
+      token text primary key,
+      user_id uuid not null references users(id) on delete cascade,
+      expires_at timestamptz not null,
+      used boolean not null default false,
+      created_at timestamptz not null default now()
+    );
+
+    create table if not exists audit_logs (
+      id uuid primary key,
+      user_id uuid references users(id) on delete set null,
+      action text not null,
+      metadata jsonb not null default '{}'::jsonb,
+      created_at timestamptz not null default now()
+    );
+
     create table if not exists service_plans (
       id text primary key,
       audience text not null check (audience in ('driver', 'shop')),
@@ -349,19 +372,19 @@ export async function findUserById(id) {
   if (pool) {
     await ensureDatabase();
     const result = await pool.query(
-      "select id, name, email, role, shop_name, created_at from users where id = $1 limit 1",
+      "select id, name, email, role, shop_name, email_verified, created_at from users where id = $1 limit 1",
       [id],
     );
     const user = result.rows[0];
     return user
-      ? { ...user, shopName: user.shop_name, createdAt: user.created_at }
+      ? { ...user, shopName: user.shop_name, emailVerified: user.email_verified, createdAt: user.created_at }
       : null;
   }
   const store = await readStore();
   const user = (store.users || []).find((item) => item.id === id);
   if (!user) return null;
   const { passwordHash, ...safeUser } = user;
-  return safeUser;
+  return { emailVerified: false, ...safeUser };
 }
 
 export async function createUser(user) {
@@ -381,6 +404,56 @@ export async function createUser(user) {
   }));
   const { passwordHash, ...safeUser } = user;
   return safeUser;
+}
+
+// Redacts PII embedded directly in diagnoses/quote_requests/itemized_quotes rows
+// (these SET NULL on the user_id FK rather than cascade, so the raw text would
+// otherwise survive a user delete untouched) then deletes the user row, which
+// cascades vehicles + shop_profiles via their existing FKs. Does NOT touch
+// phone_verifications/pending_diagnoses/parts_inquiries — those have no FK to
+// users at all (keyed by phone/batch_id only), so there's no reliable way to
+// link them back to this account; callers must disclose that limitation.
+export async function deleteUserAccount(userId) {
+  if (pool) {
+    await ensureDatabase();
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `update diagnoses set description = '[deleted]', result = '{}'::jsonb where user_id = $1`,
+        [userId],
+      );
+      await client.query(
+        `update quote_requests set customer = '[deleted]', vehicle = '[deleted]', issue = '[deleted]' where user_id = $1`,
+        [userId],
+      );
+      await client.query(
+        `update itemized_quotes set customer_name = '[deleted]', customer_email = null, customer_phone = null where user_id = $1`,
+        [userId],
+      );
+      await client.query("delete from users where id = $1", [userId]);
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+    return;
+  }
+
+  await updateStore((store) => ({
+    ...store,
+    diagnoses: (store.diagnoses || []).map((d) =>
+      d.userId === userId ? { ...d, description: "[deleted]", result: {} } : d),
+    quoteRequests: (store.quoteRequests || []).map((q) =>
+      q.userId === userId ? { ...q, customer: "[deleted]", vehicle: "[deleted]", issue: "[deleted]" } : q),
+    itemizedQuotes: (store.itemizedQuotes || []).map((q) =>
+      q.userId === userId ? { ...q, customerName: "[deleted]", customerEmail: null, customerPhone: null } : q),
+    users: (store.users || []).filter((u) => u.id !== userId),
+    vehicles: (store.vehicles || []).filter((v) => v.userId !== userId),
+    shopProfiles: (store.shopProfiles || []).filter((p) => p.userId !== userId),
+  }));
 }
 
 export async function getShopProfile(userId) {
@@ -761,6 +834,125 @@ export async function markPhoneVerified(phone) {
   }));
 }
 
+export async function createEmailVerification(userId) {
+  const token = crypto.randomBytes(32).toString("hex");
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  if (pool) {
+    await ensureDatabase();
+    await pool.query(
+      `insert into email_verifications (token, user_id, expires_at) values ($1, $2, $3)`,
+      [token, userId, expiresAt],
+    );
+    return token;
+  }
+  await updateStore((store) => ({
+    ...store,
+    emailVerifications: { ...(store.emailVerifications || {}), [token]: { token, userId, expiresAt } },
+  }));
+  return token;
+}
+
+export async function verifyEmailToken(token) {
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query(
+      "select user_id, expires_at from email_verifications where token = $1",
+      [token],
+    );
+    const row = result.rows[0];
+    if (!row) return { ok: false, reason: "invalid" };
+    if (new Date(row.expires_at) < new Date()) return { ok: false, reason: "expired" };
+    await pool.query("update users set email_verified = true where id = $1", [row.user_id]);
+    await pool.query("delete from email_verifications where token = $1", [token]);
+    return { ok: true, userId: row.user_id };
+  }
+  const store = await readStore();
+  const record = (store.emailVerifications || {})[token];
+  if (!record) return { ok: false, reason: "invalid" };
+  if (new Date(record.expiresAt) < new Date()) return { ok: false, reason: "expired" };
+  await updateStore((current) => {
+    const { [token]: _removed, ...rest } = current.emailVerifications || {};
+    return {
+      ...current,
+      users: (current.users || []).map((u) => (u.id === record.userId ? { ...u, emailVerified: true } : u)),
+      emailVerifications: rest,
+    };
+  });
+  return { ok: true, userId: record.userId };
+}
+
+export async function createPasswordReset(userId) {
+  const token = crypto.randomBytes(32).toString("hex");
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 hour
+  if (pool) {
+    await ensureDatabase();
+    await pool.query(
+      `insert into password_resets (token, user_id, expires_at) values ($1, $2, $3)`,
+      [token, userId, expiresAt],
+    );
+    return token;
+  }
+  await updateStore((store) => ({
+    ...store,
+    passwordResets: { ...(store.passwordResets || {}), [token]: { token, userId, expiresAt, used: false } },
+  }));
+  return token;
+}
+
+export async function consumePasswordReset(token) {
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query(
+      "select user_id, expires_at, used from password_resets where token = $1",
+      [token],
+    );
+    const row = result.rows[0];
+    if (!row || row.used) return { ok: false, reason: "invalid" };
+    if (new Date(row.expires_at) < new Date()) return { ok: false, reason: "expired" };
+    await pool.query("update password_resets set used = true where token = $1", [token]);
+    return { ok: true, userId: row.user_id };
+  }
+  const store = await readStore();
+  const record = (store.passwordResets || {})[token];
+  if (!record || record.used) return { ok: false, reason: "invalid" };
+  if (new Date(record.expiresAt) < new Date()) return { ok: false, reason: "expired" };
+  await updateStore((current) => ({
+    ...current,
+    passwordResets: { ...(current.passwordResets || {}), [token]: { ...record, used: true } },
+  }));
+  return { ok: true, userId: record.userId };
+}
+
+export async function setUserPassword(userId, passwordHash) {
+  if (pool) {
+    await ensureDatabase();
+    await pool.query("update users set password_hash = $2 where id = $1", [userId, passwordHash]);
+    return;
+  }
+  await updateStore((store) => ({
+    ...store,
+    users: (store.users || []).map((u) => (u.id === userId ? { ...u, passwordHash } : u)),
+  }));
+}
+
+export async function recordAuditLog(userId, action, metadata = {}) {
+  if (pool) {
+    await ensureDatabase();
+    await pool.query(
+      `insert into audit_logs (id, user_id, action, metadata) values ($1, $2, $3, $4)`,
+      [crypto.randomUUID(), userId, action, JSON.stringify(metadata)],
+    );
+    return;
+  }
+  await updateStore((store) => ({
+    ...store,
+    auditLogs: [
+      ...(store.auditLogs || []),
+      { id: crypto.randomUUID(), userId, action, metadata, createdAt: new Date().toISOString() },
+    ],
+  }));
+}
+
 export async function markPhoneUsedFree(phone) {
   const now = new Date().toISOString();
   if (pool) {
@@ -1050,6 +1242,14 @@ export async function adminMigrate() {
   await pool.query(`
     alter table users drop constraint if exists users_role_check;
     alter table users add constraint users_role_check check (role in ('driver','shop','admin'));
+  `);
+}
+
+export async function accountHardeningMigrate() {
+  if (!pool) return;
+  await ensureDatabase();
+  await pool.query(`
+    alter table users add column if not exists email_verified boolean not null default false;
   `);
 }
 

@@ -11,6 +11,14 @@ import { authConfigured, createToken, hashPassword, optionalAuth, requireAuth, v
 import {
   adminMigrate,
   workOrderMigrate,
+  accountHardeningMigrate,
+  createEmailVerification,
+  verifyEmailToken,
+  createPasswordReset,
+  consumePasswordReset,
+  setUserPassword,
+  recordAuditLog,
+  deleteUserAccount,
   approveQuoteByToken,
   completePartsInquiry,
   createItemizedQuote,
@@ -65,7 +73,7 @@ import { lookupCodes } from "./obd-codes.js";
 import { decodeVinFromNhtsa, getRecallsForVehicle } from "./nhtsa.js";
 import { extractSearchKeywords } from "./symptom-search.js";
 import { buildQuoteFromDiagnosis } from "./parts.js";
-import { sendQuoteNotification, sendShopApprovalNotification, sendInvoiceNotification, sendStageUpdateNotification, sendOutcomeReminderNotification } from "./notify.js";
+import { sendQuoteNotification, sendShopApprovalNotification, sendInvoiceNotification, sendStageUpdateNotification, sendOutcomeReminderNotification, sendVerificationEmail, sendPasswordResetEmail } from "./notify.js";
 import { searchRepairShops } from "./shops.js";
 import { generateOtp, normalizePhone, otpConfigured, OTP_TTL_MS, sendOtpSms } from "./otp.js";
 import { constructWebhookEvent, createDiagnosisCheckout } from "./stripe.js";
@@ -169,7 +177,31 @@ app.post("/api/auth/register", rateLimit({ windowMs: 15 * 60 * 1000, limit: 10 }
     createdAt: new Date().toISOString(),
   });
 
+  recordAuditLog(user.id, "register", { email: user.email, role: user.role }).catch((e) => console.error("[audit]", e.message));
+
+  createEmailVerification(user.id)
+    .then((token) => sendVerificationEmail({ to: user.email, name: user.name, token, language: request.body?.language }))
+    .catch((e) => console.error("[notify] verification email failed:", e.message));
+
   response.status(201).json({ user, token: createToken(user) });
+});
+
+app.get("/api/auth/verify-email", async (request, response) => {
+  const token = String(request.query.token || "").trim();
+  if (!token) return response.status(400).json({ error: "Falta el token de verificación." });
+  const result = await verifyEmailToken(token);
+  if (!result.ok) {
+    return response.status(result.reason === "expired" ? 410 : 400).json({
+      error: result.reason === "expired" ? "El enlace de verificación expiró." : "El enlace de verificación no es válido.",
+    });
+  }
+  response.json({ ok: true });
+});
+
+app.post("/api/auth/resend-verification", requireAuth, rateLimit({ windowMs: 15 * 60 * 1000, limit: 5 }), async (request, response) => {
+  const token = await createEmailVerification(request.user.id);
+  await sendVerificationEmail({ to: request.user.email, name: request.user.name, token, language: request.body?.language });
+  response.json({ ok: true });
 });
 
 app.post("/api/auth/login", rateLimit({ windowMs: 15 * 60 * 1000, limit: 10 }), async (request, response) => {
@@ -190,11 +222,59 @@ app.post("/api/auth/login", rateLimit({ windowMs: 15 * 60 * 1000, limit: 10 }), 
     shopName: storedUser.shop_name || storedUser.shopName,
     createdAt: storedUser.created_at || storedUser.createdAt,
   };
+  recordAuditLog(user.id, "login", {}).catch((e) => console.error("[audit]", e.message));
   response.json({ user, token: createToken(user) });
 });
 
 app.get("/api/auth/me", requireAuth, (request, response) => {
   response.json({ user: request.user });
+});
+
+app.post("/api/auth/forgot-password", rateLimit({ windowMs: 15 * 60 * 1000, limit: 10 }), async (request, response) => {
+  const email = String(request.body?.email || "").trim().toLowerCase();
+  // Always return the same generic success message, whether or not the account
+  // exists — confirming/denying account existence here is a real info leak.
+  const genericResponse = { ok: true, message: "Si existe una cuenta con ese correo, enviamos un enlace para restablecer la contraseña." };
+  if (!email) return response.json(genericResponse);
+  const storedUser = await findUserByEmail(email);
+  if (storedUser) {
+    const token = await createPasswordReset(storedUser.id);
+    await sendPasswordResetEmail({ to: storedUser.email, name: storedUser.name, token, language: request.body?.language });
+    recordAuditLog(storedUser.id, "password_reset_requested", {}).catch((e) => console.error("[audit]", e.message));
+  }
+  response.json(genericResponse);
+});
+
+app.post("/api/auth/reset-password", rateLimit({ windowMs: 15 * 60 * 1000, limit: 10 }), async (request, response) => {
+  const token = String(request.body?.token || "").trim();
+  const parsedPassword = authInput.pick({ password: true }).safeParse({ password: request.body?.password });
+  if (!token || !parsedPassword.success) {
+    return response.status(400).json({ error: "Ingresa un token válido y una contraseña de al menos 8 caracteres." });
+  }
+  const result = await consumePasswordReset(token);
+  if (!result.ok) {
+    return response.status(result.reason === "expired" ? 410 : 400).json({
+      error: result.reason === "expired" ? "El enlace para restablecer la contraseña expiró." : "El enlace para restablecer la contraseña no es válido.",
+    });
+  }
+  await setUserPassword(result.userId, await hashPassword(parsedPassword.data.password));
+  recordAuditLog(result.userId, "password_reset_completed", {}).catch((e) => console.error("[audit]", e.message));
+  response.json({ ok: true });
+});
+
+app.delete("/api/auth/me", requireAuth, async (request, response) => {
+  const password = String(request.body?.password || "");
+  const storedUser = await findUserByEmail(request.user.email);
+  const passwordHash = storedUser?.password_hash || storedUser?.passwordHash;
+  if (!password || !storedUser || !(await verifyPassword(password, passwordHash))) {
+    return response.status(403).json({ error: "La contraseña no es correcta." });
+  }
+  await recordAuditLog(request.user.id, "account_deletion", { email: request.user.email }).catch((e) => console.error("[audit]", e.message));
+  await deleteUserAccount(request.user.id);
+  response.json({
+    ok: true,
+    message: "Tu cuenta y los datos vinculados a ella fueron eliminados. Nota: los registros de verificación telefónica y diagnósticos pendientes ligados solo a tu número de teléfono no están vinculados a tu cuenta y no pueden eliminarse automáticamente por esta vía.",
+  });
 });
 
 app.get("/api/vehicle/decode", async (request, response) => {
@@ -411,6 +491,9 @@ app.patch("/api/quote-requests/:id/status", requireAuth, async (request, respons
   if (!updated) {
     return response.status(404).json({ error: "No encontramos esa solicitud para tu taller." });
   }
+
+  recordAuditLog(request.user.id, "quote_request_status_changed", { quoteRequestId: request.params.id, status: parsed.data.status })
+    .catch((e) => console.error("[audit]", e.message));
 
   response.json({ quoteRequest: updated });
 });
@@ -745,6 +828,8 @@ app.patch("/api/admin/outcomes/:id/review", requireAuth, requireAdmin, async (re
   if (!parsed.success) return response.status(400).json({ error: "Datos de revisión no válidos." });
   const outcome = await adminReviewOutcome(request.params.id, request.user.id, parsed.data);
   if (!outcome) return response.status(404).json({ error: "Resultado no encontrado." });
+  recordAuditLog(request.user.id, "admin_outcome_reviewed", { outcomeId: request.params.id, approve: parsed.data.approve })
+    .catch((e) => console.error("[audit]", e.message));
   response.json({ outcome });
 });
 
@@ -1377,6 +1462,7 @@ function requireAdmin(request, response, next) {
 // Run on startup: widen role constraint + promote admin email + work order columns
 adminMigrate().catch((err) => console.error("[admin migrate]", err.message));
 workOrderMigrate().catch((err) => console.error("[work order migrate]", err.message));
+accountHardeningMigrate().catch((err) => console.error("[account hardening migrate]", err.message));
 
 app.get("/api/admin/stats", requireAuth, requireAdmin, async (_req, res) => {
   try {

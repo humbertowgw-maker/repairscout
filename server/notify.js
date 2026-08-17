@@ -340,3 +340,43 @@ export async function sendQuoteNotification({ quote, customer, quoteId, token, l
 
   return results;
 }
+
+export async function sendVerificationEmail({ to, name, token, language = "es" }) {
+  const isEn = language === "en";
+  const verifyUrl = `${APP_URL}/verify-email?token=${token}`;
+  const subject = isEn ? "Verify your RepairScout email" : "Verifica tu correo de RepairScout";
+  const html = `<div style="font-family:system-ui;max-width:520px;margin:0 auto">
+    <h2 style="color:#1e3a5f">RepairScout</h2>
+    <p>${isEn ? "Hi" : "Hola"} ${name},</p>
+    <p>${isEn ? "Confirm your email address to finish setting up your account." : "Confirma tu correo electrónico para terminar de configurar tu cuenta."}</p>
+    <a href="${verifyUrl}" style="display:inline-block;background:#1e3a5f;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700">${isEn ? "Verify email" : "Verificar correo"} →</a>
+    <p style="margin-top:16px;font-size:12px;color:#666">${isEn ? "This link expires in 24 hours." : "Este enlace expira en 24 horas."}</p>
+  </div>`;
+
+  try {
+    return await sendEmail({ to, subject, html });
+  } catch (e) {
+    console.error("[notify] verification email error:", e.message);
+    return { emailError: e.message };
+  }
+}
+
+export async function sendPasswordResetEmail({ to, name, token, language = "es" }) {
+  const isEn = language === "en";
+  const resetUrl = `${APP_URL}/reset-password?token=${token}`;
+  const subject = isEn ? "Reset your RepairScout password" : "Restablece tu contraseña de RepairScout";
+  const html = `<div style="font-family:system-ui;max-width:520px;margin:0 auto">
+    <h2 style="color:#1e3a5f">RepairScout</h2>
+    <p>${isEn ? "Hi" : "Hola"} ${name},</p>
+    <p>${isEn ? "We received a request to reset your password. If this wasn't you, you can ignore this email." : "Recibimos una solicitud para restablecer tu contraseña. Si no fuiste tú, puedes ignorar este correo."}</p>
+    <a href="${resetUrl}" style="display:inline-block;background:#1e3a5f;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700">${isEn ? "Reset password" : "Restablecer contraseña"} →</a>
+    <p style="margin-top:16px;font-size:12px;color:#666">${isEn ? "This link expires in 1 hour." : "Este enlace expira en 1 hora."}</p>
+  </div>`;
+
+  try {
+    return await sendEmail({ to, subject, html });
+  } catch (e) {
+    console.error("[notify] password reset email error:", e.message);
+    return { emailError: e.message };
+  }
+}

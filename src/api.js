@@ -18,6 +18,26 @@ async function request(path, options = {}) {
   return payload;
 }
 
+export function verifyEmail(token) {
+  return request(`/api/auth/verify-email?token=${encodeURIComponent(token)}`);
+}
+
+export function resendVerification(language) {
+  return request("/api/auth/resend-verification", { method: "POST", body: JSON.stringify({ language }) });
+}
+
+export function forgotPassword(email, language) {
+  return request("/api/auth/forgot-password", { method: "POST", body: JSON.stringify({ email, language }) });
+}
+
+export function resetPassword(token, password) {
+  return request("/api/auth/reset-password", { method: "POST", body: JSON.stringify({ token, password }) });
+}
+
+export function deleteAccount(password) {
+  return request("/api/auth/me", { method: "DELETE", body: JSON.stringify({ password }) });
+}
+
 export function decodeVin(vin) {
   return request(`/api/vehicle/decode?vin=${encodeURIComponent(vin)}`);
 }

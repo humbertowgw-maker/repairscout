@@ -1539,7 +1539,7 @@ app.put("/api/admin/plans/:id", requireAuth, requireAdmin, async (req, res) => {
 if (process.env.VERCEL !== "1") {
   app.use(express.static(path.join(projectDir, "dist")));
   // SPA fallback — also handles /track/:token and /diagnose/result routes
-  app.get("*", limiter(60 * 1000, 300), (request, response, next) => {
+  app.get("/*splat", limiter(60 * 1000, 300), (request, response, next) => {
     if (request.path.startsWith("/api/")) return next();
     response.sendFile(path.join(projectDir, "dist", "index.html"));
   });

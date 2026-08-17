@@ -19,7 +19,15 @@ https://repairscout-smoky.vercel.app
 8. Add a licensed labor-time provider before presenting labor hours as authoritative.
 9. [Complete for private preview] Add privacy policy, terms, support contact, and customer consent language before sending quote requests.
 10. [Complete for private preview] Add basic API rate limits and security headers.
-11. Add production-grade data-deletion workflow, email verification, password reset, monitoring, backups, and audit logs.
+11. [Mostly complete, 2026-08-16] Data-deletion workflow, email verification, and
+    password reset are live and confirmed working end-to-end (both via test suite
+    and a real browser walkthrough) — see `DELETE /api/auth/me`,
+    `GET /api/auth/verify-email`, `POST /api/auth/forgot-password` /
+    `reset-password`. Audit logging is live for auth/admin/quote-status actions.
+    Still open: **backups** (a Neon plan-tier/dashboard question, not code — check
+    whether point-in-time-recovery is actually enabled for `repairscout-db`) and
+    **real monitoring** (only bare crash handlers exist; wiring an actual
+    Sentry/uptime service needs a provider chosen and a DSN provisioned).
 
 ## Current public-preview behavior
 

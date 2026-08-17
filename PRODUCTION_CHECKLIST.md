@@ -24,10 +24,17 @@ https://repairscout-smoky.vercel.app
     and a real browser walkthrough) — see `DELETE /api/auth/me`,
     `GET /api/auth/verify-email`, `POST /api/auth/forgot-password` /
     `reset-password`. Audit logging is live for auth/admin/quote-status actions.
-    Still open: **backups** (a Neon plan-tier/dashboard question, not code — check
-    whether point-in-time-recovery is actually enabled for `repairscout-db`) and
-    **real monitoring** (only bare crash handlers exist; wiring an actual
-    Sentry/uptime service needs a provider chosen and a DSN provisioned).
+    **Backups**: `repairscout-db` is confirmed via the Neon API to be on the
+    Free plan with point-in-time recovery enabled, 6-hour retention window
+    (Free plan's max — paid Launch/Scale plans go to 1-30 days). Upgrading
+    the Neon plan tier is a cost/risk decision, not a code task.
+    **Monitoring**: Sentry is wired up in code (2026-08-17) — same pattern as
+    white-glove-backend/frontend, initialized before anything else in
+    `server/index.js`, capturing uncaught exceptions/rejections and any
+    unhandled Express route error. Fails closed to console-only logging if
+    `SENTRY_DSN` is unset. Still needs a real DSN provisioned (create a
+    Sentry project, add `SENTRY_DSN` to the Vercel env vars) before it
+    actually reports anywhere.
 
 ## Current public-preview behavior
 

@@ -1545,4 +1545,16 @@ if (process.env.VERCEL !== "1") {
   });
 }
 
+// Catch-all error handler — most routes already have their own try/catch,
+// this is the floor for anything that doesn't (or throws before reaching
+// one), reported to Sentry when configured instead of vanishing silently.
+app.use((err, request, response, next) => {
+  console.error("[server error]", err);
+  if (process.env.SENTRY_DSN) {
+    import("@sentry/node").then((Sentry) => Sentry.captureException(err)).catch(() => {});
+  }
+  if (response.headersSent) return next(err);
+  response.status(500).json({ error: "Internal server error" });
+});
+
 export default app;

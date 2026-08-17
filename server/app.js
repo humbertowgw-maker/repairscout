@@ -262,7 +262,7 @@ app.post("/api/auth/reset-password", rateLimit({ windowMs: 15 * 60 * 1000, limit
   response.json({ ok: true });
 });
 
-app.delete("/api/auth/me", requireAuth, async (request, response) => {
+app.delete("/api/auth/me", requireAuth, rateLimit({ windowMs: 15 * 60 * 1000, limit: 10 }), async (request, response) => {
   const password = String(request.body?.password || "");
   const storedUser = await findUserByEmail(request.user.email);
   const passwordHash = storedUser?.password_hash || storedUser?.passwordHash;

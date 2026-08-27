@@ -402,7 +402,7 @@ async function diagnoseWithOllama(systemPrompt, userPrompt, language) {
   // exhausted, so a longer wait for a genuinely free result is the right
   // tradeoff over failing fast into the generic hardcoded fallback.
   const payload = await requestJson(
-    `${process.env.OLLAMA_DIAGNOSIS_URL || "http://100.72.213.92:11435"}/v1/chat/completions`,
+    `${process.env.OLLAMA_DIAGNOSIS_URL || "http://birdsstudio-1:11435"}/v1/chat/completions`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },

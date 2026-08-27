@@ -205,7 +205,7 @@ describe("diagnoseVehicle — fallback chain ordering", () => {
       "https://api.groq.com/openai/v1/chat/completions",
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
       "https://openrouter.ai/api/v1/chat/completions",
-      "http://100.72.213.92:11435/v1/chat/completions",
+      "http://birdsstudio-1:11435/v1/chat/completions",
     ]);
     expect(generateTextMock).toHaveBeenCalledTimes(1);
     // ai SDK v7 regression check: v6 used `system`, v7 renamed it to

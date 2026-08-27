@@ -100,6 +100,25 @@ After validating the preview:
 vercel --prod
 ```
 
+### Protected local-first diagnosis queue
+
+When `LOCAL_WORKER_TOKEN` is configured in production, free and paid customer
+diagnoses are stored in PostgreSQL and pulled by a private local worker. Vercel
+never connects directly to Ollama. The worker processes one job at a time by
+default, waits while BrainOS health is unavailable, retries abandoned leases,
+and fails a job after three attempts.
+
+Configure the same random token as a sensitive production environment variable
+and on the worker host, then run:
+
+```bash
+./scripts/install-local-diagnosis-worker.sh
+```
+
+The installer stores the token in macOS Keychain and installs a quiet
+LaunchAgent. `LOCAL_AI_MAX_CONCURRENT=1` is the safe launch default; increase it
+only after observing memory pressure and queue latency.
+
 ## Engineering notes
 
 Notes on how this was actually built, aimed at anyone reading the commit history rather than the pitch.

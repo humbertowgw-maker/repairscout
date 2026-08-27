@@ -227,6 +227,7 @@ async function ensureDatabase() {
       phone text not null,
       vehicle jsonb not null default '{}',
       mileage text,
+      obd_codes jsonb not null default '[]'::jsonb,
       description text not null,
       zip text not null,
       language text not null default 'es',
@@ -237,6 +238,15 @@ async function ensureDatabase() {
       completed_at timestamptz,
       created_at timestamptz not null default now()
     );
+
+    alter table pending_diagnoses add column if not exists status text not null default 'awaiting_payment';
+    alter table pending_diagnoses add column if not exists obd_codes jsonb not null default '[]'::jsonb;
+    alter table pending_diagnoses add column if not exists attempts integer not null default 0;
+    alter table pending_diagnoses add column if not exists claimed_at timestamptz;
+    alter table pending_diagnoses add column if not exists worker_id text;
+    alter table pending_diagnoses add column if not exists last_error text;
+    create index if not exists pending_diagnoses_worker_queue
+      on pending_diagnoses(status, created_at) where paid = true and result is null;
 
     create table if not exists parts_inquiries (
       id uuid primary key,
@@ -974,17 +984,17 @@ export async function markPhoneUsedFree(phone) {
 
 // ── Pending diagnoses (Stripe flow) ──────────────────────────────────────────
 
-export async function createPendingDiagnosis({ id, phone, vehicle, mileage, description, zip, language }) {
+export async function createPendingDiagnosis({ id, phone, vehicle, mileage, obdCodes = [], description, zip, language }) {
   if (pool) {
     await ensureDatabase();
     await pool.query(
-      `insert into pending_diagnoses (id, phone, vehicle, mileage, description, zip, language)
-       values ($1, $2, $3, $4, $5, $6, $7)`,
-      [id, phone, JSON.stringify(vehicle), mileage, description, zip, language],
+      `insert into pending_diagnoses (id, phone, vehicle, mileage, obd_codes, description, zip, language)
+       values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [id, phone, JSON.stringify(vehicle), mileage, JSON.stringify(obdCodes), description, zip, language],
     );
-    return { id, phone, vehicle, mileage, description, zip, language, paid: false, result: null };
+    return { id, phone, vehicle, mileage, obdCodes, description, zip, language, paid: false, result: null, status: "awaiting_payment" };
   }
-  const record = { id, phone, vehicle, mileage, description, zip, language, paid: false, result: null, createdAt: new Date().toISOString() };
+  const record = { id, phone, vehicle, mileage, obdCodes, description, zip, language, paid: false, result: null, status: "awaiting_payment", attempts: 0, createdAt: new Date().toISOString() };
   await updateStore((store) => ({
     ...store,
     pendingDiagnoses: { ...(store.pendingDiagnoses || {}), [id]: record },
@@ -1000,11 +1010,13 @@ export async function getPendingDiagnosis(id) {
     const row = r.rows[0];
     return {
       id: row.id, phone: row.phone,
-      vehicle: row.vehicle, mileage: row.mileage,
+      vehicle: row.vehicle, mileage: row.mileage, obdCodes: row.obd_codes || [],
       description: row.description, zip: row.zip, language: row.language,
       stripeSessionId: row.stripe_session_id,
       paid: row.paid, paidAt: row.paid_at,
       result: row.result, completedAt: row.completed_at,
+      status: row.status, attempts: row.attempts, claimedAt: row.claimed_at,
+      workerId: row.worker_id, lastError: row.last_error,
       createdAt: row.created_at,
     };
   }
@@ -1017,7 +1029,7 @@ export async function setPendingDiagnosisPaid(id, stripeSessionId) {
   if (pool) {
     await ensureDatabase();
     await pool.query(
-      "update pending_diagnoses set paid = true, paid_at = $2, stripe_session_id = $3 where id = $1",
+      "update pending_diagnoses set paid = true, paid_at = $2, stripe_session_id = $3, status = case when result is null then 'queued' else 'completed' end where id = $1",
       [id, now, stripeSessionId],
     );
     return;
@@ -1026,7 +1038,7 @@ export async function setPendingDiagnosisPaid(id, stripeSessionId) {
     ...store,
     pendingDiagnoses: {
       ...(store.pendingDiagnoses || {}),
-      [id]: { ...(store.pendingDiagnoses?.[id] || {}), paid: true, paidAt: now, stripeSessionId },
+      [id]: { ...(store.pendingDiagnoses?.[id] || {}), paid: true, paidAt: now, stripeSessionId, status: "queued" },
     },
   }));
 }
@@ -1036,7 +1048,7 @@ export async function setPendingDiagnosisResult(id, result) {
   if (pool) {
     await ensureDatabase();
     await pool.query(
-      "update pending_diagnoses set result = $2, completed_at = $3 where id = $1",
+      "update pending_diagnoses set result = $2, completed_at = $3, status = 'completed', last_error = null where id = $1",
       [id, JSON.stringify(result), now],
     );
     return;
@@ -1045,9 +1057,78 @@ export async function setPendingDiagnosisResult(id, result) {
     ...store,
     pendingDiagnoses: {
       ...(store.pendingDiagnoses || {}),
-      [id]: { ...(store.pendingDiagnoses?.[id] || {}), result, completedAt: now },
+      [id]: { ...(store.pendingDiagnoses?.[id] || {}), result, completedAt: now, status: "completed", lastError: null },
     },
   }));
+}
+
+export async function claimPendingDiagnosis(workerId, staleAfterMinutes = 15) {
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query(
+      `with candidate as (
+         select id from pending_diagnoses
+         where paid = true and result is null and attempts < 3
+           and (status = 'queued' or (status = 'processing' and claimed_at < now() - ($2 * interval '1 minute')))
+         order by created_at asc
+         for update skip locked
+         limit 1
+       )
+       update pending_diagnoses p
+       set status = 'processing', claimed_at = now(), worker_id = $1, attempts = attempts + 1, last_error = null
+       from candidate where p.id = candidate.id
+         and (select count(*) from pending_diagnoses active
+              where active.status = 'processing'
+                and active.claimed_at >= now() - ($2 * interval '1 minute')) < $3
+       returning p.*`,
+      [workerId, staleAfterMinutes, Math.max(1, Number(process.env.LOCAL_AI_MAX_CONCURRENT || 1))],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    return {
+      id: row.id, phone: row.phone, vehicle: row.vehicle, mileage: row.mileage, obdCodes: row.obd_codes || [],
+      description: row.description, zip: row.zip, language: row.language,
+      status: row.status, attempts: row.attempts, claimedAt: row.claimed_at,
+    };
+  }
+  let claimed = null;
+  const now = Date.now();
+  await updateStore((store) => {
+    const all = Object.values(store.pendingDiagnoses || {});
+    const active = all.filter((item) => item.status === "processing" && now - new Date(item.claimedAt || 0).getTime() <= staleAfterMinutes * 60_000);
+    if (active.length >= Math.max(1, Number(process.env.LOCAL_AI_MAX_CONCURRENT || 1))) return store;
+    const entries = all
+      .filter((item) => item.paid && !item.result && (item.attempts || 0) < 3)
+      .filter((item) => item.status === "queued" || (item.status === "processing" && now - new Date(item.claimedAt || 0).getTime() > staleAfterMinutes * 60_000))
+      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    const item = entries[0];
+    if (!item) return store;
+    claimed = { ...item, status: "processing", attempts: (item.attempts || 0) + 1, claimedAt: new Date().toISOString(), workerId };
+    return { ...store, pendingDiagnoses: { ...store.pendingDiagnoses, [item.id]: claimed } };
+  });
+  return claimed;
+}
+
+export async function failPendingDiagnosis(id, workerId, message) {
+  const error = String(message || "Worker failed").slice(0, 500);
+  if (pool) {
+    await ensureDatabase();
+    await pool.query(
+      `update pending_diagnoses
+       set status = case when attempts >= 3 then 'failed' else 'queued' end,
+           claimed_at = null, worker_id = null, last_error = $3
+       where id = $1 and worker_id = $2 and result is null`,
+      [id, workerId, error],
+    );
+    return;
+  }
+  await updateStore((store) => {
+    const item = store.pendingDiagnoses?.[id];
+    if (!item || item.workerId !== workerId || item.result) return store;
+    return { ...store, pendingDiagnoses: { ...store.pendingDiagnoses, [id]: {
+      ...item, status: (item.attempts || 0) >= 3 ? "failed" : "queued", claimedAt: null, workerId: null, lastError: error,
+    } } };
+  });
 }
 
 // ── Parts inquiries (Bland.ai call tracking) ──────────────────────────────────

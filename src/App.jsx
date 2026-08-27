@@ -2747,7 +2747,20 @@ function PhoneOtpModal({ diagnosisInput, onFreeResult, onClose }) {
       const res = await verifyOtp(phone.trim(), code.trim());
       if (res.freeEligible) {
         setStep("loading");
-        const { result } = await runFreeDiagnosis({ ...diagnosisInput, phone: phone.trim() });
+        const freeResponse = await runFreeDiagnosis({ ...diagnosisInput, phone: phone.trim() });
+        if (freeResponse.result) {
+          onFreeResult(freeResponse.result);
+          return;
+        }
+        const { pendingId } = freeResponse;
+        let result = null;
+        for (let attempt = 0; attempt < 60 && !result; attempt += 1) {
+          const pending = await getDiagnoseResult(pendingId);
+          if (pending.ready) result = pending.result;
+          else if (pending.status === "failed") throw new Error(isEn ? "Local processing is temporarily unavailable. Please try again later." : "El procesamiento local no está disponible temporalmente. Intenta de nuevo más tarde.");
+          else await new Promise(resolve => setTimeout(resolve, 3000));
+        }
+        if (!result) throw new Error(isEn ? "Your diagnosis is still queued. Please try again shortly." : "Tu diagnóstico sigue en cola. Intenta de nuevo en breve.");
         onFreeResult(result);
       } else {
         setStep("paying");
@@ -2841,7 +2854,7 @@ function PhoneOtpModal({ diagnosisInput, onFreeResult, onClose }) {
             <div style={{ width: 36, height: 36, border: "3px solid #dfe5e1", borderTopColor: "#1f7251", borderRadius: "50%", animation: "spin 1s linear infinite", margin: "0 auto 16px" }} />
             <p style={{ margin: 0, fontSize: 14 }}>
               {step === "loading"
-                ? (isEn ? "Running your AI diagnosis…" : "Generando tu diagnóstico con IA…")
+                ? (isEn ? "Your diagnosis is safely queued on our local AI fleet…" : "Tu diagnóstico está en cola segura en nuestra flota de IA local…")
                 : (isEn ? "Redirecting to secure payment…" : "Redirigiendo al pago seguro…")}
             </p>
           </div>
@@ -3012,6 +3025,10 @@ function DiagnoseResultPage({ pendingId }) {
       try {
         const data = await getDiagnoseResult(pendingId);
         if (data.ready) { setState({ ready: true, result: data.result, vehicle: data.vehicle, error: "" }); return; }
+        if (data.status === "failed") {
+          setState(s => ({ ...s, error: isEn ? "Local processing is temporarily unavailable. Your payment is recorded; support can safely retry this job." : "El procesamiento local no está disponible temporalmente. Tu pago está registrado; soporte puede reintentar el trabajo." }));
+          return;
+        }
         if (attempts++ < 20) setTimeout(poll, 3000);
         else setState(s => ({ ...s, error: isEn ? "Taking longer than expected. Please refresh." : "Está tardando más de lo esperado. Recarga la página." }));
       } catch (e) {
@@ -3030,7 +3047,7 @@ function DiagnoseResultPage({ pendingId }) {
           <div style={{ textAlign: "center", padding: "60px 0" }}>
             <div style={{ width: 44, height: 44, border: "4px solid #dfe5e1", borderTopColor: "#1f7251", borderRadius: "50%", animation: "spin 1s linear infinite", margin: "0 auto 20px" }} />
             <h2 style={{ fontSize: 22, marginBottom: 8 }}>{isEn ? "Generating your diagnosis…" : "Generando tu diagnóstico…"}</h2>
-            <p style={{ color: "#69736e" }}>{isEn ? "This usually takes 10–20 seconds." : "Esto suele tardar entre 10 y 20 segundos."}</p>
+            <p style={{ color: "#69736e" }}>{isEn ? "Your job is queued on our private local AI fleet. You can safely refresh this page." : "Tu trabajo está en cola en nuestra flota privada de IA local. Puedes recargar esta página sin problema."}</p>
           </div>
         )}
         {state.error && (

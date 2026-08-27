@@ -158,6 +158,20 @@ describe("diagnoseVehicle — no providers configured", () => {
   });
 });
 
+describe("Ollama production isolation", () => {
+  it("does not expose the private Ollama fleet from Vercel unless explicitly enabled", () => {
+    vi.stubEnv("VERCEL", "1");
+    vi.stubEnv("OLLAMA_DIAGNOSIS_ENABLED", "");
+    expect(getDiagnosisProviderStatus().configured).not.toContain("ollama");
+  });
+
+  it("allows the authenticated local worker to opt in explicitly", () => {
+    vi.stubEnv("VERCEL", "1");
+    vi.stubEnv("OLLAMA_DIAGNOSIS_ENABLED", "true");
+    expect(getDiagnosisProviderStatus().configured).toContain("ollama");
+  });
+});
+
 describe("diagnoseVehicle — fallback chain ordering", () => {
   it("tries providers in the documented default order and stops at the first success", async () => {
     // All five providers configured; a neutral description (no brake/OBD

@@ -66,6 +66,8 @@ import {
   getGuideStats,
   listOutcomesNeedingReminder,
   markOutcomeReminderSent,
+  claimPendingDiagnosis,
+  failPendingDiagnosis,
 } from "./database.js";
 import { diagnoseVehicle, getDiagnosisProviderStatus } from "./diagnosis.js";
 import { REPAIR_GUIDES } from "./repair-guides.js";
@@ -145,6 +147,44 @@ app.get("/api/health", rateLimit({ windowMs: 60 * 1000, limit: 60 }), (_request,
     smsConfigured: otpConfigured(),
     timestamp: new Date().toISOString(),
   });
+});
+
+function requireWorker(request, response, next) {
+  const configured = process.env.LOCAL_WORKER_TOKEN || "";
+  const supplied = String(request.headers.authorization || "").replace(/^Bearer\s+/i, "");
+  if (!configured || configured.length < 24 || supplied.length !== configured.length
+      || !crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(configured))) {
+    return response.status(401).json({ error: "Worker authentication required." });
+  }
+  next();
+}
+
+function localWorkerConfigured() {
+  return String(process.env.LOCAL_WORKER_TOKEN || "").length >= 24;
+}
+
+app.post("/api/local-worker/claim", requireWorker, async (request, response) => {
+  const workerId = String(request.body?.workerId || "repairscout-local").trim().slice(0, 100);
+  const job = await claimPendingDiagnosis(workerId);
+  response.json({ job });
+});
+
+app.post("/api/local-worker/jobs/:id/complete", requireWorker, async (request, response) => {
+  const workerId = String(request.body?.workerId || "").trim();
+  const result = request.body?.result;
+  if (!workerId || !result || typeof result !== "object") return response.status(400).json({ error: "Missing worker result." });
+  const pending = await getPendingDiagnosis(request.params.id);
+  if (!pending || pending.workerId !== workerId || pending.status !== "processing") return response.status(409).json({ error: "Job is not owned by this worker." });
+  await setPendingDiagnosisResult(pending.id, result);
+  await saveDiagnosis({ id: crypto.randomUUID(), userId: null, vehicle: pending.vehicle || {}, description: pending.description, zip: pending.zip, result, createdAt: new Date().toISOString() });
+  response.json({ ok: true });
+});
+
+app.post("/api/local-worker/jobs/:id/fail", requireWorker, async (request, response) => {
+  const workerId = String(request.body?.workerId || "").trim();
+  if (!workerId) return response.status(400).json({ error: "Missing worker id." });
+  await failPendingDiagnosis(request.params.id, workerId, request.body?.error);
+  response.json({ ok: true });
 });
 
 const authInput = z.object({
@@ -1013,10 +1053,17 @@ app.post("/api/diagnose/free", limiter(15 * 60 * 1000, 30), async (request, resp
   if (verification.usedFree) return response.status(402).json({ error: "Ya usaste tu diagnóstico gratuito.", requiresPayment: true });
 
   try {
+    if (!localWorkerConfigured()) {
+      await markPhoneUsedFree(normalizedPhone);
+      const result = await diagnoseVehicle({ vehicle: vehicle || {}, mileage, description, obdCodes, zip, language: language || "es" });
+      await saveDiagnosis({ id: crypto.randomUUID(), userId: request.user?.id || null, vehicle: vehicle || {}, description, zip, result, createdAt: new Date().toISOString() });
+      return response.json({ result, free: true, queued: false });
+    }
+    const id = crypto.randomUUID();
+    await createPendingDiagnosis({ id, phone: normalizedPhone, vehicle: vehicle || {}, mileage, obdCodes, description, zip, language: language || "es" });
+    await setPendingDiagnosisPaid(id, `free:${id}`);
     await markPhoneUsedFree(normalizedPhone);
-    const result = await diagnoseVehicle({ vehicle: vehicle || {}, mileage, description, obdCodes, zip, language: language || "es" });
-    await saveDiagnosis({ id: crypto.randomUUID(), userId: request.user?.id || null, vehicle: vehicle || {}, description, zip, result, createdAt: new Date().toISOString() });
-    return response.json({ result, free: true });
+    return response.status(202).json({ pendingId: id, queued: true, free: true });
   } catch (e) {
     console.error("[diagnose/free] error:", e.message);
     return response.status(502).json({ error: "No pudimos generar el diagnóstico." });
@@ -1040,20 +1087,19 @@ app.post("/api/stripe/webhook", async (request, response) => {
     const { pendingId, phone } = session.metadata || {};
     if (pendingId) {
       await setPendingDiagnosisPaid(pendingId, session.id).catch(console.error);
-      const pending = await getPendingDiagnosis(pendingId).catch(() => null);
-      if (pending && !pending.result) {
-        try {
-          const result = await diagnoseVehicle({
-            vehicle: pending.vehicle || {},
-            mileage: pending.mileage,
-            description: pending.description,
-            zip: pending.zip,
-            language: pending.language || "es",
-          });
-          await setPendingDiagnosisResult(pendingId, result);
-          await saveDiagnosis({ id: crypto.randomUUID(), userId: null, vehicle: pending.vehicle || {}, description: pending.description, zip: pending.zip, result, createdAt: new Date().toISOString() });
-        } catch (e) {
-          console.error("[stripe/webhook] diagnosis error:", e.message);
+      if (!localWorkerConfigured()) {
+        const pending = await getPendingDiagnosis(pendingId).catch(() => null);
+        if (pending && !pending.result) {
+          try {
+            const result = await diagnoseVehicle({
+              vehicle: pending.vehicle || {}, mileage: pending.mileage, obdCodes: pending.obdCodes || [],
+              description: pending.description, zip: pending.zip, language: pending.language || "es",
+            });
+            await setPendingDiagnosisResult(pendingId, result);
+            await saveDiagnosis({ id: crypto.randomUUID(), userId: null, vehicle: pending.vehicle || {}, description: pending.description, zip: pending.zip, result, createdAt: new Date().toISOString() });
+          } catch (error) {
+            console.error("[stripe/webhook] diagnosis error:", error.message);
+          }
         }
       }
     }
@@ -1070,7 +1116,7 @@ app.get("/api/diagnose/result/:id", async (request, response) => {
   const pending = await getPendingDiagnosis(id).catch(() => null);
   if (!pending) return response.status(404).json({ error: "No encontramos ese diagnóstico." });
   if (!pending.paid) return response.status(402).json({ error: "Pago pendiente.", pending: true });
-  if (!pending.result) return response.json({ ready: false, paid: true });
+  if (!pending.result) return response.json({ ready: false, paid: true, status: pending.status || "queued", attempts: pending.attempts || 0 });
   return response.json({ ready: true, paid: true, result: pending.result, vehicle: pending.vehicle });
 });
 

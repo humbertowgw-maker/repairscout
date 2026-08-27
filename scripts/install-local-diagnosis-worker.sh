@@ -5,6 +5,8 @@ repo_dir="$(cd "$(dirname "$0")/.." && pwd)"
 label="com.repairscout.local-diagnosis-worker"
 plist_path="$HOME/Library/LaunchAgents/${label}.plist"
 log_dir="$HOME/Library/Logs/RepairScout"
+config_dir="$HOME/Library/Application Support/RepairScout"
+config_file="$config_dir/worker.env"
 
 if [[ -z "${LOCAL_WORKER_TOKEN:-}" ]]; then
   read -r -s "LOCAL_WORKER_TOKEN?Paste the RepairScout local worker token: "
@@ -15,8 +17,9 @@ if [[ ${#LOCAL_WORKER_TOKEN} -lt 24 ]]; then
   exit 1
 fi
 
-/usr/bin/security add-generic-password -U -a "$USER" -s com.repairscout.local-worker -w "$LOCAL_WORKER_TOKEN" >/dev/null
-/bin/mkdir -p "$HOME/Library/LaunchAgents" "$log_dir"
+/bin/mkdir -p "$HOME/Library/LaunchAgents" "$log_dir" "$config_dir"
+/usr/bin/printf 'LOCAL_WORKER_TOKEN=%s\n' "$LOCAL_WORKER_TOKEN" > "$config_file"
+/bin/chmod 600 "$config_file"
 
 /usr/bin/python3 - "$plist_path" "$repo_dir" "$log_dir" <<'PY'
 import plistlib, sys
@@ -34,7 +37,7 @@ with open(path, "wb") as handle:
     plistlib.dump(payload, handle)
 PY
 
-/bin/chmod 600 "$plist_path"
+/bin/chmod 644 "$plist_path"
 /bin/chmod +x "$repo_dir/scripts/run-local-diagnosis-worker.sh"
 /bin/launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
 /bin/launchctl bootstrap "gui/$(id -u)" "$plist_path"

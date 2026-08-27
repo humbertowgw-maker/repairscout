@@ -115,8 +115,8 @@ and on the worker host, then run:
 ./scripts/install-local-diagnosis-worker.sh
 ```
 
-The installer stores the token in macOS Keychain and installs a quiet
-LaunchAgent. `LOCAL_AI_MAX_CONCURRENT=1` is the safe launch default; increase it
+The installer stores the token in an owner-only Application Support file and
+installs a quiet LaunchAgent. `LOCAL_AI_MAX_CONCURRENT=1` is the safe launch default; increase it
 only after observing memory pressure and queue latency.
 
 ## Engineering notes

@@ -9,8 +9,12 @@ config_dir="$HOME/Library/Application Support/RepairScout"
 config_file="$config_dir/worker.env"
 
 if [[ -z "${LOCAL_WORKER_TOKEN:-}" ]]; then
-  read -r -s "LOCAL_WORKER_TOKEN?Paste the RepairScout local worker token: "
-  echo
+  if [[ -r "$config_file" ]]; then
+    source "$config_file"
+  else
+    read -r -s "LOCAL_WORKER_TOKEN?Paste the RepairScout local worker token: "
+    echo
+  fi
 fi
 if [[ ${#LOCAL_WORKER_TOKEN} -lt 24 ]]; then
   echo "Worker token must contain at least 24 characters." >&2

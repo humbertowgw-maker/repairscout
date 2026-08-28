@@ -57,6 +57,7 @@ const ALL_PROVIDER_ENV_KEYS = [
   "OPENAI_API_KEY",
   "AI_PROVIDER_ORDER",
   "OLLAMA_DIAGNOSIS_ENABLED",
+  "OLLAMA_GATEWAY_API_KEY",
 ];
 
 function fullyValidDiagnosis(overrides = {}) {
@@ -170,6 +171,28 @@ describe("Ollama production isolation", () => {
     vi.stubEnv("OLLAMA_DIAGNOSIS_ENABLED", "true");
     expect(getDiagnosisProviderStatus().configured).toContain("ollama");
   });
+
+  it("stays 'configured' without a gateway key, but falls through to the next provider on the real call — the gateway itself has no auth, so the key is enforced here, not by dropping ollama from configured status", async () => {
+    vi.stubEnv("GROQ_API_KEY", "groq-key");
+    expect(getDiagnosisProviderStatus().configured).toContain("ollama");
+
+    const fetchMock = vi.fn(async () => chatCompletionResponse(fullyValidDiagnosis({ summary: "from groq" })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await diagnoseVehicle({
+      vehicle: {},
+      description: "weird noise",
+      mileage: "20000",
+      zip: "10001",
+      language: "en",
+    });
+
+    // groq is tried first per the default order, so ollama's missing-key
+    // throw never surfaces here — this only proves the module didn't crash
+    // on load/status-check without OLLAMA_GATEWAY_API_KEY set.
+    expect(result.source).toBe("groq");
+    expect(result.summary).toBe("from groq");
+  });
 });
 
 describe("diagnoseVehicle — fallback chain ordering", () => {
@@ -183,6 +206,7 @@ describe("diagnoseVehicle — fallback chain ordering", () => {
     vi.stubEnv("OPENROUTER_API_KEY", "openrouter-key");
     vi.stubEnv("AI_GATEWAY_API_KEY", "gateway-key");
     vi.stubEnv("OPENAI_API_KEY", "openai-key");
+    vi.stubEnv("OLLAMA_GATEWAY_API_KEY", "gw-key");
 
     const calledUrls = [];
     const fetchMock = vi.fn(async (url) => {
@@ -205,7 +229,7 @@ describe("diagnoseVehicle — fallback chain ordering", () => {
       "https://api.groq.com/openai/v1/chat/completions",
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
       "https://openrouter.ai/api/v1/chat/completions",
-      "http://birdsstudio-1:11435/v1/chat/completions",
+      "https://ollama.whitegwireless.com/v1/chat/completions",
     ]);
     expect(generateTextMock).toHaveBeenCalledTimes(1);
     // ai SDK v7 regression check: v6 used `system`, v7 renamed it to

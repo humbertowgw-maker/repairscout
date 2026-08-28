@@ -401,11 +401,16 @@ async function diagnoseWithOllama(systemPrompt, userPrompt, language) {
   // use. This is a fallback tier only reached after free-tier options are
   // exhausted, so a longer wait for a genuinely free result is the right
   // tradeoff over failing fast into the generic hardcoded fallback.
+  //
+  // Reached through an authenticated gateway -- Ollama itself has no auth,
+  // OLLAMA_GATEWAY_API_KEY is required.
+  const gatewayKey = process.env.OLLAMA_GATEWAY_API_KEY;
+  if (!gatewayKey) throw new Error("OLLAMA_GATEWAY_API_KEY not configured");
   const payload = await requestJson(
-    `${process.env.OLLAMA_DIAGNOSIS_URL || "http://birdsstudio-1:11435"}/v1/chat/completions`,
+    `${process.env.OLLAMA_DIAGNOSIS_URL || "https://ollama.whitegwireless.com"}/v1/chat/completions`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${gatewayKey}` },
       body: JSON.stringify({
         model: process.env.OLLAMA_DIAGNOSIS_MODEL || "qwen2.5:7b",
         messages: [

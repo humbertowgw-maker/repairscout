@@ -68,6 +68,13 @@ import {
   markOutcomeReminderSent,
   claimPendingDiagnosis,
   failPendingDiagnosis,
+  shopPlanMigrate,
+  getShopPlan,
+  setShopSubscription,
+  getShopUsageThisMonth,
+  recordScoutWorkbenchRun,
+  getQuoteRequestById,
+  getShopUserIdByStripeSubscription,
 } from "./database.js";
 import { diagnoseVehicle, getDiagnosisProviderStatus } from "./diagnosis.js";
 import { REPAIR_GUIDES } from "./repair-guides.js";
@@ -78,7 +85,7 @@ import { buildQuoteFromDiagnosis } from "./parts.js";
 import { sendQuoteNotification, sendShopApprovalNotification, sendInvoiceNotification, sendStageUpdateNotification, sendOutcomeReminderNotification, sendVerificationEmail, sendPasswordResetEmail } from "./notify.js";
 import { searchRepairShops } from "./shops.js";
 import { generateOtp, normalizePhone, otpConfigured, OTP_TTL_MS, sendOtpSms } from "./otp.js";
-import { constructWebhookEvent, createDiagnosisCheckout } from "./stripe.js";
+import { constructWebhookEvent, createDiagnosisCheckout, createShopPlanCheckout } from "./stripe.js";
 import { blandConfigured, parseBlandWebhook, simulatedCallResult, startPartInquiryCall } from "./bland.js";
 
 const app = express();
@@ -522,6 +529,17 @@ app.patch("/api/quote-requests/:id/status", requireAuth, async (request, respons
     return response.status(400).json({ error: "Selecciona un estado válido." });
   }
 
+  // Working a request for the first time this month counts against requestLimit;
+  // re-updating a request already worked (workedAt set) is always free.
+  const existing = await getQuoteRequestById(request.params.id);
+  if (existing && existing.shopName === request.user.shopName && !existing.workedAt && parsed.data.status !== "Solicitud nueva") {
+    const plan = await getShopPlan(request.user.id);
+    const usage = await getShopUsageThisMonth(request.user.id, request.user.shopName);
+    if (usage.requestCount >= plan.requestLimit) {
+      return response.status(402).json({ error: "Alcanzaste tu límite mensual de solicitudes. Mejora tu plan para seguir atendiendo clientes." });
+    }
+  }
+
   const updated = await updateQuoteRequestStatus({
     id: request.params.id,
     shopName: request.user.shopName,
@@ -553,15 +571,26 @@ const quoteBuildInput = z.object({
   language: z.string().max(5).optional(),
 });
 
-app.post("/api/quotes/build", async (request, response) => {
+app.post("/api/quotes/build", requireAuth, async (request, response) => {
+  if (request.user.role !== "shop") {
+    return response.status(403).json({ error: "Solo el taller puede usar Scout." });
+  }
   const parsed = quoteBuildInput.safeParse(request.body);
   if (!parsed.success) return response.status(400).json({ error: "Faltan datos de diagnóstico." });
+
+  const plan = await getShopPlan(request.user.id);
+  const usage = await getShopUsageThisMonth(request.user.id, request.user.shopName);
+  if (usage.diagnosisCount >= plan.diagnosisLimit) {
+    return response.status(402).json({ error: "Alcanzaste tu límite mensual de diagnósticos Scout. Mejora tu plan para continuar." });
+  }
+
   try {
     const result = await buildQuoteFromDiagnosis({
       diagnosis: parsed.data.diagnosis,
       vehicle: parsed.data.vehicle || {},
       language: parsed.data.language || "es",
     });
+    await recordScoutWorkbenchRun(request.user.id).catch((e) => console.error("[scout usage]", e.message));
     return response.json(result);
   } catch (e) {
     console.error("Quote build error:", e);
@@ -589,6 +618,13 @@ app.post("/api/quotes/send", requireAuth, async (request, response) => {
   const parsed = quoteSendInput.safeParse(request.body);
   if (!parsed.success) {
     return response.status(400).json({ error: "Faltan datos para enviar la cotización." });
+  }
+  if (request.user.role === "shop") {
+    const plan = await getShopPlan(request.user.id);
+    const usage = await getShopUsageThisMonth(request.user.id, request.user.shopName);
+    if (usage.quoteCount >= plan.quoteLimit) {
+      return response.status(402).json({ error: "Alcanzaste tu límite mensual de cotizaciones enviadas. Mejora tu plan para continuar." });
+    }
   }
   if (!parsed.data.customer.email && !parsed.data.customer.phone) {
     return response.status(400).json({ error: "Proporciona un correo o teléfono del cliente." });
@@ -1084,7 +1120,15 @@ app.post("/api/stripe/webhook", async (request, response) => {
 
   if (event.type === "checkout.session.completed") {
     const session = event.data.object;
-    const { pendingId, phone } = session.metadata || {};
+    const { pendingId, phone, shopUserId, planId } = session.metadata || {};
+    if (shopUserId) {
+      await setShopSubscription(shopUserId, {
+        planId,
+        stripeCustomerId: session.customer,
+        stripeSubscriptionId: session.subscription,
+        status: "active",
+      }).catch(console.error);
+    }
     if (pendingId) {
       await setPendingDiagnosisPaid(pendingId, session.id).catch(console.error);
       if (!localWorkerConfigured()) {
@@ -1105,7 +1149,56 @@ app.post("/api/stripe/webhook", async (request, response) => {
     }
   }
 
+  if (event.type === "customer.subscription.updated" || event.type === "customer.subscription.deleted") {
+    const subscription = event.data.object;
+    const shopUserId = await getShopUserIdByStripeSubscription(subscription.id).catch(() => null);
+    if (shopUserId) {
+      const status = event.type === "customer.subscription.deleted" ? "canceled" : subscription.status;
+      await setShopSubscription(shopUserId, { status }).catch(console.error);
+    }
+  }
+
   response.json({ received: true });
+});
+
+// ── Shop plan billing ─────────────────────────────────────────────────────────
+
+app.post("/api/shop-profile/checkout", requireAuth, async (request, response) => {
+  if (request.user.role !== "shop") {
+    return response.status(403).json({ error: "Solo el taller puede iniciar este pago." });
+  }
+  // setShopSubscription (called from the webhook once payment completes) updates an
+  // existing shop_profiles row — it can't create one, so a shop must save its profile
+  // before checkout or the subscription would have nowhere to record itself.
+  const existingProfile = await getShopProfile(request.user.id);
+  if (!existingProfile) {
+    return response.status(400).json({ error: "Guarda el perfil de tu taller antes de elegir un plan." });
+  }
+  const planId = String(request.body?.planId || "");
+  const plan = (await listPlans()).find((p) => p.id === planId && p.audience === "shop");
+  if (!plan) return response.status(400).json({ error: "Selecciona un plan válido." });
+
+  try {
+    const session = await createShopPlanCheckout({
+      shopUserId: request.user.id,
+      planId: plan.id,
+      planName: plan.name,
+      priceMonthly: plan.priceMonthly,
+    });
+    return response.json({ url: session.url });
+  } catch (e) {
+    console.error("[shop-profile/checkout] Stripe error:", e.message);
+    return response.status(502).json({ error: "No pudimos iniciar el pago." });
+  }
+});
+
+app.get("/api/shop-profile/usage", requireAuth, async (request, response) => {
+  if (request.user.role !== "shop") {
+    return response.status(403).json({ error: "Solo el taller puede ver este panel." });
+  }
+  const plan = await getShopPlan(request.user.id);
+  const usage = await getShopUsageThisMonth(request.user.id, request.user.shopName);
+  response.json({ plan, usage });
 });
 
 // ── Pending diagnosis result (poll after Stripe) ──────────────────────────────
@@ -1509,6 +1602,7 @@ function requireAdmin(request, response, next) {
 adminMigrate().catch((err) => console.error("[admin migrate]", err.message));
 workOrderMigrate().catch((err) => console.error("[work order migrate]", err.message));
 accountHardeningMigrate().catch((err) => console.error("[account hardening migrate]", err.message));
+shopPlanMigrate().catch((err) => console.error("[shop plan migrate]", err.message));
 
 app.get("/api/admin/stats", requireAuth, requireAdmin, async (_req, res) => {
   try {

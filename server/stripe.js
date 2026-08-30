@@ -36,6 +36,33 @@ export async function createDiagnosisCheckout({ pendingId, phone }) {
   return session;
 }
 
+export async function createShopPlanCheckout({ shopUserId, planId, planName, priceMonthly }) {
+  const stripe = getStripe();
+  if (!stripe) throw new Error("Stripe not configured — add STRIPE_SECRET_KEY.");
+
+  const session = await stripe.checkout.sessions.create({
+    payment_method_types: ["card"],
+    line_items: [
+      {
+        price_data: {
+          currency: "usd",
+          product_data: { name: `RepairScout ${planName}` },
+          unit_amount: Math.round(priceMonthly * 100),
+          recurring: { interval: "month" },
+        },
+        quantity: 1,
+      },
+    ],
+    mode: "subscription",
+    client_reference_id: shopUserId,
+    success_url: `${APP_URL}/?shopCheckout=success`,
+    cancel_url:  `${APP_URL}/?shopCheckout=cancelled`,
+    metadata:    { shopUserId, planId },
+  });
+
+  return session;
+}
+
 export function constructWebhookEvent(rawBody, signature) {
   const stripe = getStripe();
   const secret = process.env.STRIPE_WEBHOOK_SECRET;

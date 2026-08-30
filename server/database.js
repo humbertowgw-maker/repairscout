@@ -338,6 +338,7 @@ function mapQuoteRow(row) {
     status: row.status,
     initials: row.initials,
     createdAt: row.created_at,
+    workedAt: row.worked_at || null,
   };
 }
 
@@ -758,6 +759,19 @@ export async function approveQuoteByToken(token) {
   return updated;
 }
 
+export async function getQuoteRequestById(id) {
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query("select * from quote_requests where id = $1 limit 1", [id]);
+    return mapQuoteRow(result.rows[0]);
+  }
+  const store = await readStore();
+  return (store.quoteRequests || []).find((q) => q.id === id) || null;
+}
+
+// Marks a request "worked" (counts against the shop's monthly requestLimit) the
+// first time it moves off "Solicitud nueva" — later status changes on the same
+// request are free, since the shop already spent its one unit of attention on it.
 export async function updateQuoteRequestStatus({ id, shopName, status }) {
   if (pool) {
     await ensureDatabase();
@@ -768,7 +782,10 @@ export async function updateQuoteRequestStatus({ id, shopName, status }) {
       where += " and shop_name = $3";
     }
     const result = await pool.query(
-      `update quote_requests set status = $2 ${where} returning *`,
+      `update quote_requests set
+         status = $2,
+         worked_at = case when worked_at is null and status = 'Solicitud nueva' then now() else worked_at end
+       ${where} returning *`,
       values,
     );
     return mapQuoteRow(result.rows[0]);
@@ -779,7 +796,11 @@ export async function updateQuoteRequestStatus({ id, shopName, status }) {
     ...store,
     quoteRequests: (store.quoteRequests || []).map((quote) => {
       if (quote.id !== id || (shopName && quote.shopName !== shopName)) return quote;
-      updatedQuote = { ...quote, status };
+      updatedQuote = {
+        ...quote,
+        status,
+        workedAt: quote.workedAt || (quote.status === "Solicitud nueva" ? new Date().toISOString() : null),
+      };
       return updatedQuote;
     }),
   }));
@@ -1332,6 +1353,182 @@ export async function accountHardeningMigrate() {
   await pool.query(`
     alter table users add column if not exists email_verified boolean not null default false;
   `);
+}
+
+export async function shopPlanMigrate() {
+  if (!pool) return;
+  await ensureDatabase();
+  await pool.query(`
+    alter table shop_profiles
+      add column if not exists plan_id text references service_plans(id),
+      add column if not exists stripe_customer_id text,
+      add column if not exists stripe_subscription_id text,
+      add column if not exists subscription_status text not null default 'none';
+
+    create table if not exists scout_workbench_runs (
+      id uuid primary key,
+      shop_user_id uuid not null references users(id) on delete cascade,
+      created_at timestamptz not null default now()
+    );
+
+    alter table quote_requests add column if not exists worked_at timestamptz;
+  `);
+}
+
+// A null plan_id (shop hasn't picked/paid for a plan) resolves to zero limits
+// across the board rather than needing special-cased "no plan" branches at
+// every call site — every enforcement check just compares usage to this.
+const ZERO_LIMIT_PLAN = { id: null, requestLimit: 0, diagnosisLimit: 0, quoteLimit: 0 };
+
+export async function getShopPlan(userId) {
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query(
+      `select sp.plan_id, sp.stripe_customer_id, sp.stripe_subscription_id, sp.subscription_status,
+              plan.name, plan.price_monthly, plan.request_limit, plan.diagnosis_limit, plan.quote_limit
+       from shop_profiles sp
+       left join service_plans plan on plan.id = sp.plan_id
+       where sp.user_id = $1
+       limit 1`,
+      [userId],
+    );
+    const row = result.rows[0];
+    const active = row && ["active", "grandfathered"].includes(row.subscription_status);
+    if (!row || !row.plan_id || !active) {
+      return {
+        ...ZERO_LIMIT_PLAN,
+        subscriptionStatus: row?.subscription_status || "none",
+        stripeCustomerId: row?.stripe_customer_id || null,
+      };
+    }
+    return {
+      id: row.plan_id,
+      name: row.name,
+      priceMonthly: Number(row.price_monthly),
+      requestLimit: Number(row.request_limit),
+      diagnosisLimit: Number(row.diagnosis_limit),
+      quoteLimit: Number(row.quote_limit),
+      subscriptionStatus: row.subscription_status,
+      stripeCustomerId: row.stripe_customer_id,
+      stripeSubscriptionId: row.stripe_subscription_id,
+    };
+  }
+  const store = await readStore();
+  const profile = (store.shopProfiles || []).find((p) => p.userId === userId);
+  const active = profile && ["active", "grandfathered"].includes(profile.subscriptionStatus);
+  if (!profile || !profile.planId || !active) {
+    return { ...ZERO_LIMIT_PLAN, subscriptionStatus: profile?.subscriptionStatus || "none", stripeCustomerId: profile?.stripeCustomerId || null };
+  }
+  const plan = DEFAULT_PLANS.find((p) => p.id === profile.planId);
+  if (!plan) return { ...ZERO_LIMIT_PLAN, subscriptionStatus: profile.subscriptionStatus || "none", stripeCustomerId: profile.stripeCustomerId || null };
+  return {
+    id: plan.id,
+    name: plan.name,
+    priceMonthly: plan.priceMonthly,
+    requestLimit: plan.requestLimit,
+    diagnosisLimit: plan.diagnosisLimit,
+    quoteLimit: plan.quoteLimit,
+    subscriptionStatus: profile.subscriptionStatus,
+    stripeCustomerId: profile.stripeCustomerId,
+    stripeSubscriptionId: profile.stripeSubscriptionId,
+  };
+}
+
+export async function getShopUserIdByStripeSubscription(stripeSubscriptionId) {
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query(
+      "select user_id from shop_profiles where stripe_subscription_id = $1 limit 1",
+      [stripeSubscriptionId],
+    );
+    return result.rows[0]?.user_id || null;
+  }
+  const store = await readStore();
+  const profile = (store.shopProfiles || []).find((p) => p.stripeSubscriptionId === stripeSubscriptionId);
+  return profile?.userId || null;
+}
+
+export async function setShopSubscription(userId, { planId, stripeCustomerId, stripeSubscriptionId, status }) {
+  if (pool) {
+    await ensureDatabase();
+    const result = await pool.query(
+      `update shop_profiles set
+         plan_id = coalesce($2, plan_id),
+         stripe_customer_id = coalesce($3, stripe_customer_id),
+         stripe_subscription_id = coalesce($4, stripe_subscription_id),
+         subscription_status = $5,
+         updated_at = now()
+       where user_id = $1`,
+      [userId, planId || null, stripeCustomerId || null, stripeSubscriptionId || null, status],
+    );
+    // The checkout route requires an existing shop_profiles row, so this should never
+    // miss — if it does, the shop paid but has nowhere for the subscription to land.
+    if (result.rowCount === 0) {
+      console.error(`[setShopSubscription] no shop_profiles row for user ${userId} — subscription not recorded`);
+    }
+    return;
+  }
+  await updateStore((store) => ({
+    ...store,
+    shopProfiles: (store.shopProfiles || []).map((p) =>
+      p.userId === userId
+        ? {
+            ...p,
+            planId: planId || p.planId,
+            stripeCustomerId: stripeCustomerId || p.stripeCustomerId,
+            stripeSubscriptionId: stripeSubscriptionId || p.stripeSubscriptionId,
+            subscriptionStatus: status,
+          }
+        : p,
+    ),
+  }));
+}
+
+export async function getShopUsageThisMonth(userId, shopName) {
+  if (pool) {
+    await ensureDatabase();
+    const [requests, diagnoses, quotes] = await Promise.all([
+      pool.query(
+        "select count(*)::int as count from quote_requests where shop_name = $1 and worked_at >= date_trunc('month', now())",
+        [shopName],
+      ),
+      pool.query(
+        "select count(*)::int as count from scout_workbench_runs where shop_user_id = $1 and created_at >= date_trunc('month', now())",
+        [userId],
+      ),
+      pool.query(
+        "select count(*)::int as count from itemized_quotes where user_id = $1 and created_at >= date_trunc('month', now())",
+        [userId],
+      ),
+    ]);
+    return {
+      requestCount: requests.rows[0]?.count || 0,
+      diagnosisCount: diagnoses.rows[0]?.count || 0,
+      quoteCount: quotes.rows[0]?.count || 0,
+    };
+  }
+  const store = await readStore();
+  const monthStart = new Date();
+  monthStart.setDate(1);
+  monthStart.setHours(0, 0, 0, 0);
+  const inMonth = (iso) => iso && new Date(iso) >= monthStart;
+  return {
+    requestCount: (store.quoteRequests || []).filter((q) => q.shopName === shopName && inMonth(q.workedAt)).length,
+    diagnosisCount: (store.scoutWorkbenchRuns || []).filter((r) => r.shopUserId === userId && inMonth(r.createdAt)).length,
+    quoteCount: (store.itemizedQuotes || []).filter((q) => q.userId === userId && inMonth(q.createdAt)).length,
+  };
+}
+
+export async function recordScoutWorkbenchRun(userId) {
+  if (pool) {
+    await ensureDatabase();
+    await pool.query("insert into scout_workbench_runs (id, shop_user_id) values ($1, $2)", [crypto.randomUUID(), userId]);
+    return;
+  }
+  await updateStore((store) => ({
+    ...store,
+    scoutWorkbenchRuns: [...(store.scoutWorkbenchRuns || []), { id: crypto.randomUUID(), shopUserId: userId, createdAt: new Date().toISOString() }],
+  }));
 }
 
 export async function listAllUsers() {

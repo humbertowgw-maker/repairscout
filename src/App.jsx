@@ -79,6 +79,8 @@ import {
   registerAccount,
   runFreeDiagnosis,
   saveShopProfile,
+  getShopUsage,
+  startShopCheckout,
   saveQuoteRequest,
   saveVehicle,
   searchShops,
@@ -3930,6 +3932,7 @@ function Sidebar({ active, setActive, shopProfile, user }) {
     [t("tabPiezas"), PackageSearch],
     [t("tabScout"), Bot],
     [t("tabPerfil"), Building2],
+    [t("tabPlan"), CircleDollarSign],
     ...(isAdmin ? [["Admin", ShieldCheck]] : []),
   ];
 
@@ -3990,6 +3993,73 @@ function ShopProfilePanel({ profileForm, setProfileForm, onSave, profileSaving, 
       <button className="primary" onClick={onSave} disabled={profileSaving}>
         {profileSaving ? (isEn ? "Saving..." : "Guardando...") : (isEn ? "Save & claim shop" : "Guardar y reclamar taller")} <Check size={17} />
       </button>
+    </section>
+  );
+}
+
+const SHOP_PLAN_OPTIONS = [
+  { id: "shop-starter", name: "Shop Starter", priceMonthly: 49 },
+  { id: "shop-pro", name: "Shop Pro", priceMonthly: 149 },
+];
+
+function UsageBar({ label, used, limit }) {
+  const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+  return (
+    <div className="usage-bar-row">
+      <div className="usage-bar-label"><span>{label}</span><span>{used} / {limit}</span></div>
+      <div className="usage-bar-track"><div className="usage-bar-fill" style={{ width: `${pct}%`, background: pct >= 100 ? "#ef4444" : "#3b82f6" }} /></div>
+    </div>
+  );
+}
+
+function ShopBillingPanel({ plan, usage, onUpgrade, busy }) {
+  const { lang } = useLang();
+  const isEn = lang === "en";
+  const hasPlan = Boolean(plan?.id);
+  const isGrandfathered = plan?.subscriptionStatus === "grandfathered";
+
+  return (
+    <section className="panel shop-profile-panel">
+      <div className="panel-title">
+        <div>
+          <h2>{isEn ? "Plan & Billing" : "Plan y facturación"}</h2>
+          <p>{isEn ? "Your current plan and this month's usage." : "Tu plan actual y el uso de este mes."}</p>
+        </div>
+        {hasPlan && (
+          <span className="live-badge on">
+            {plan.name}{isGrandfathered ? (isEn ? " (complimentary)" : " (cortesía)") : ""}
+          </span>
+        )}
+      </div>
+
+      {hasPlan ? (
+        <>
+          <div className="usage-bars">
+            <UsageBar label={isEn ? "Customer requests worked" : "Solicitudes atendidas"} used={usage?.requestCount || 0} limit={plan.requestLimit} />
+            <UsageBar label={isEn ? "Scout AI diagnoses" : "Diagnósticos Scout IA"} used={usage?.diagnosisCount || 0} limit={plan.diagnosisLimit} />
+            <UsageBar label={isEn ? "Quotes sent" : "Cotizaciones enviadas"} used={usage?.quoteCount || 0} limit={plan.quoteLimit} />
+          </div>
+          {!isGrandfathered && (
+            <p className="profile-message">
+              {isEn ? `$${plan.priceMonthly}/mo` : `$${plan.priceMonthly}/mes`}
+            </p>
+          )}
+        </>
+      ) : (
+        <p className="profile-message">
+          {isEn ? "Choose a plan to start receiving and responding to customer requests." : "Elige un plan para empezar a recibir y responder solicitudes de clientes."}
+        </p>
+      )}
+
+      {(!hasPlan || plan.id === "shop-starter") && (
+        <div className="profile-form" style={{ marginTop: 16 }}>
+          {SHOP_PLAN_OPTIONS.filter((p) => p.id !== plan?.id).map((p) => (
+            <button key={p.id} className="primary" onClick={() => onUpgrade(p.id)} disabled={busy}>
+              {isEn ? `Upgrade to ${p.name} — $${p.priceMonthly}/mo` : `Mejorar a ${p.name} — $${p.priceMonthly}/mes`}
+            </button>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -4317,7 +4387,7 @@ function AdminPanel() {
 }
 
 // Stable tab keys that survive language switches
-const TAB_KEYS = ["tabResumen","tabSolicitudes","sentQuotes","tabCitas","tabOrdenes","tabClientes","tabPiezas","tabScout","tabPerfil","admin"];
+const TAB_KEYS = ["tabResumen","tabSolicitudes","sentQuotes","tabCitas","tabOrdenes","tabClientes","tabPiezas","tabScout","tabPerfil","tabPlan","admin"];
 
 function tabLabel(key, lang) {
   if (key === "sentQuotes") return lang === "en" ? "Sent Quotes" : "Cotizaciones";
@@ -4361,6 +4431,15 @@ function ShopPortal({ user, onRequireAuth }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [notifOpen, setNotifOpen] = useState(false);
   const [approvedQuotes, setApprovedQuotes] = useState([]);
+  const [shopPlan, setShopPlan] = useState(null);
+  const [shopUsage, setShopUsage] = useState(null);
+  const [billingBusy, setBillingBusy] = useState(false);
+
+  const refreshShopUsage = () => {
+    getShopUsage()
+      .then((result) => { setShopPlan(result.plan); setShopUsage(result.usage); })
+      .catch(() => {});
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -4376,8 +4455,20 @@ function ShopPortal({ user, onRequireAuth }) {
         }
       })
       .catch(() => { if (!cancelled) setSavedRequests([]); });
+    refreshShopUsage();
     return () => { cancelled = true; };
   }, []);
+
+  const upgradeShopPlan = async (planId) => {
+    setBillingBusy(true);
+    try {
+      const { url } = await startShopCheckout(planId);
+      window.location.href = url;
+    } catch (e) {
+      console.error(e);
+      setBillingBusy(false);
+    }
+  };
 
   const saveProfile = async () => {
     if (!user) { onRequireAuth(); return; }
@@ -4529,6 +4620,10 @@ function ShopPortal({ user, onRequireAuth }) {
           {/* Profile panel — shown when tab is Perfil OR shop not yet claimed */}
           {(active === t("tabPerfil") || (!shopProfile?.claimed && user?.role !== "admin")) && (
             <ShopProfilePanel profileForm={profileForm} setProfileForm={setProfileForm} onSave={saveProfile} profileSaving={profileSaving} profileMessage={profileMessage} />
+          )}
+
+          {active === t("tabPlan") && (
+            <ShopBillingPanel plan={shopPlan} usage={shopUsage} onUpgrade={upgradeShopPlan} busy={billingBusy} />
           )}
 
           {/* ── Tab routing ── */}

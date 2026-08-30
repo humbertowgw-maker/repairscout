@@ -138,7 +138,7 @@ export const T = {
     // tabs
     tabResumen: "Resumen", tabSolicitudes: "Solicitudes", tabCitas: "Citas",
     tabOrdenes: "Órdenes de trabajo", tabClientes: "Clientes", tabPiezas: "Búsqueda de piezas",
-    tabScout: "Scout IA", tabPerfil: "Perfil",
+    tabScout: "Scout IA", tabPerfil: "Perfil", tabPlan: "Plan",
     // profile
     profileTitle: "Perfil del taller", profileDesc: "Estos datos preparan tu taller para recibir solicitudes reales y cotizar mejor.",
     claimed: "Reclamado", pending: "Pendiente",
@@ -278,7 +278,7 @@ export const T = {
     setupShopName: "Set up your shop",
     tabResumen: "Overview", tabSolicitudes: "Requests", tabCitas: "Appointments",
     tabOrdenes: "Work orders", tabClientes: "Customers", tabPiezas: "Parts search",
-    tabScout: "Scout AI", tabPerfil: "Profile",
+    tabScout: "Scout AI", tabPerfil: "Profile", tabPlan: "Plan",
     profileTitle: "Shop profile", profileDesc: "This information prepares your shop to receive real requests and quote more accurately.",
     claimed: "Claimed", pending: "Pending",
     saveProfile: "Save and claim shop", saving: "Saving...",

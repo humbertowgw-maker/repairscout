@@ -100,6 +100,17 @@ export function saveShopProfile(input) {
   });
 }
 
+export function getShopUsage() {
+  return request("/api/shop-profile/usage");
+}
+
+export function startShopCheckout(planId) {
+  return request("/api/shop-profile/checkout", {
+    method: "POST",
+    body: JSON.stringify({ planId }),
+  });
+}
+
 export function getSystemHealth() {
   return request("/api/health");
 }

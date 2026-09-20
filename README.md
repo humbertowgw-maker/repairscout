@@ -7,6 +7,8 @@ RepairScout is a two-sided automotive repair platform:
 - Drivers describe a vehicle problem, receive a preliminary AI assessment, compare parts and labor costs, and request verified quotes.
 - Repair shops review customer concerns, verify diagnoses with evidence, create estimates, communicate with customers, and manage repair work.
 
+Live at: https://repairscout-smoky.vercel.app · [How to use it](docs/HOW_TO_USE.md)
+
 The current version includes a working web API, live NHTSA VIN decoding, persistent quote requests, and structured AI diagnosis support. It intentionally labels AI findings as preliminary until a repair shop performs physical tests.
 
 ## Run locally

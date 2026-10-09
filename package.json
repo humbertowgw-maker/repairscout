@@ -16,7 +16,7 @@
   "dependencies": {
     "@ai-sdk/gateway": "^4.0.100",
     "@sentry/node": "^10.75.2",
-    "@sentry/react": "^10.75.2",
+    "@sentry/react": "^11.4.0",
     "@vitejs/plugin-react": "^6.1.1",
     "ai": "^7.0.122",
     "bcryptjs": "^3.0.2",
